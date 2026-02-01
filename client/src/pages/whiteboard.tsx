@@ -114,7 +114,7 @@ const PRESET_COLORS = [
   { name: "Slate", value: "#4A5568" },
   { name: "Blue", value: "#3182CE" },
   { name: "Purple", value: "#805AD5" },
-  { name: "Teal", value: "#38B2AC" },
+  { name: "Green", value: "#30B170" },
   { name: "Black", value: "#111827" },
   { name: "Red", value: "#E53E3E" },
 ];
