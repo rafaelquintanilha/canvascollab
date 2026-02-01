@@ -41,4 +41,4 @@ waitForPort = 5000
 
 [agent]
 stack = "MOCKUP_JS"
-mockupState = "MOCKUP"
+mockupState = "FULLSTACK"
