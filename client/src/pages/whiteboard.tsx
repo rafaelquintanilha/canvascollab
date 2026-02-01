@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Circle,
   Download,
@@ -21,8 +21,9 @@ import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { useCollaboration } from "@/hooks/use-collaboration";
 
-type Tool =
+export type Tool =
   | "select"
   | "hand"
   | "pen"
@@ -62,20 +63,10 @@ type TextItem = {
   fontSize: number;
 };
 
-type BoardItem =
+export type BoardItem =
   | { type: "stroke"; data: Stroke }
   | { type: "shape"; data: Shape }
   | { type: "text"; data: TextItem };
-
-type RemoteCursor = {
-  id: string;
-  name: string;
-  color: string;
-  x: number;
-  y: number;
-  active: boolean;
-  lastSeen: number;
-};
 
 function clamp(n: number, a: number, b: number) {
   return Math.min(b, Math.max(a, n));
@@ -215,6 +206,13 @@ export default function WhiteboardPage() {
   });
 
   const [items, setItems] = useState<BoardItem[]>([]);
+  const itemsRef = useRef<BoardItem[]>(items);
+  
+  // Keep ref in sync with state to avoid stale closures
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+  
   const [redoStack, setRedoStack] = useState<BoardItem[]>([]);
 
   const [isPointerDown, setIsPointerDown] = useState(false);
@@ -224,14 +222,62 @@ export default function WhiteboardPage() {
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState<{ x: number; y: number; vx: number; vy: number } | null>(null);
 
-  const [remoteCursors, setRemoteCursors] = useState<RemoteCursor[]>(() => {
-    const now = Date.now();
-    return [
-      { id: "u1", name: "Avery", color: "#805AD5", x: 260, y: 200, active: true, lastSeen: now },
-      { id: "u2", name: "Sam", color: "#38B2AC", x: 460, y: 320, active: true, lastSeen: now },
-      { id: "u3", name: "Jordan", color: "#3182CE", x: 680, y: 240, active: false, lastSeen: now - 1800 },
-    ];
-  });
+  // Collaboration: handle remote operations
+  const handleRemoteDraw = useCallback((item: BoardItem) => {
+    setItems((prev) => [...prev, item]);
+    setRedoStack([]);
+  }, []);
+
+  const handleRemoteClear = useCallback(() => {
+    setItems([]);
+    setRedoStack([]);
+    setActiveShape(null);
+    setActiveStroke(null);
+  }, []);
+
+  // Sync callbacks for collaboration
+  const handleSyncRequest = useCallback((itemCount: number): BoardItem[] => {
+    // Use ref to get current items and avoid stale closure
+    const currentItems = itemsRef.current;
+    console.log(`[Whiteboard] Sync request: peer has ${itemCount}, I have ${currentItems.length} items`);
+    if (currentItems.length > itemCount) {
+      console.log(`[Whiteboard] Sending ${currentItems.length} items to peer`);
+      return currentItems;
+    }
+    console.log(`[Whiteboard] Not sending items (peer has equal or more)`);
+    return [];
+  }, []);
+
+  const handleSyncReceive = useCallback((newItems: BoardItem[]) => {
+    console.log(`[Whiteboard] Received sync with ${newItems.length} items`);
+    // Merge received items with our current items (avoiding duplicates by ID)
+    setItems(prev => {
+      const existingIds = new Set(prev.map(item => 
+        item.type === "stroke" ? item.data.id : 
+        item.type === "shape" ? item.data.id : 
+        item.data.id
+      ));
+      const uniqueNewItems = newItems.filter(item => {
+        const id = item.type === "stroke" ? item.data.id : 
+                   item.type === "shape" ? item.data.id : 
+                   item.data.id;
+        return !existingIds.has(id);
+      });
+      return [...prev, ...uniqueNewItems];
+    });
+    setRedoStack([]);
+  }, []);
+
+  const {
+    myName,
+    myColor,
+    remotePeers,
+    isConnected,
+    peerCount,
+    broadcastCursor,
+    broadcastDraw,
+    broadcastClear,
+  } = useCollaboration(handleRemoteDraw, handleRemoteClear, handleSyncRequest, handleSyncReceive);
 
   const displayedZoomPct = useMemo(() => formatPct(zoom), [zoom]);
 
@@ -239,34 +285,12 @@ export default function WhiteboardPage() {
     setViewport((v) => ({ ...v, zoom }));
   }, [zoom]);
 
+  // Fade inactive remote peers
   useInterval(() => {
-    // Mock “real-time” cursor movement so the UI feels collaborative.
-    setRemoteCursors((prev) => {
-      const now = Date.now();
-      return prev.map((c) => {
-        const drift = c.active ? 1 : 0.35;
-        const dx = (Math.random() - 0.5) * 20 * drift;
-        const dy = (Math.random() - 0.5) * 16 * drift;
-        return {
-          ...c,
-          x: clamp(c.x + dx, 80, 1800),
-          y: clamp(c.y + dy, 80, 1100),
-          lastSeen: c.active ? now : c.lastSeen,
-        };
-      });
-    });
-  }, 900);
-
-  useInterval(() => {
-    // Fade “inactive” cursors.
-    setRemoteCursors((prev) => {
-      const now = Date.now();
-      return prev.map((c) => ({
-        ...c,
-        active: now - c.lastSeen < 2200 ? c.active : false,
-      }));
-    });
-  }, 650);
+    const now = Date.now();
+    // Remote peers are already managed by the collaboration hook
+    // This interval is kept for any additional cleanup if needed
+  }, 1000);
 
   const draw = useMemo(() => {
     return () => {
@@ -410,6 +434,7 @@ export default function WhiteboardPage() {
   const pushItem = (item: BoardItem) => {
     setItems((prev) => [...prev, item]);
     setRedoStack([]);
+    broadcastDraw(item);
   };
 
   const onPointerDown = (e: React.PointerEvent) => {
@@ -483,14 +508,8 @@ export default function WhiteboardPage() {
     const rect = canvas.getBoundingClientRect();
     const p = toCanvasPoint(e.clientX, e.clientY, viewport, rect);
 
-    // Update “my cursor” as if it were broadcast; we just animate remote ones.
-    setRemoteCursors((prev) =>
-      prev.map((c) =>
-        c.id === "u3"
-          ? { ...c, x: clamp(p.x, 40, 1900), y: clamp(p.y, 40, 1200), active: true, lastSeen: Date.now() }
-          : c,
-      ),
-    );
+    // Broadcast cursor position to peers
+    broadcastCursor(p.x, p.y, true);
 
     if (!isPointerDown) return;
 
@@ -599,6 +618,7 @@ export default function WhiteboardPage() {
     setRedoStack([]);
     setActiveShape(null);
     setActiveStroke(null);
+    broadcastClear();
   };
 
   const resetView = () => {
@@ -630,10 +650,13 @@ export default function WhiteboardPage() {
 
   const collaborators = useMemo(() => {
     const now = Date.now();
-    return remoteCursors
-      .filter((c) => now - c.lastSeen < 12000)
-      .map((c) => ({ id: c.id, name: c.name, color: c.color, active: c.active }));
-  }, [remoteCursors]);
+    // Include self + remote peers
+    const allPeers = [
+      { id: "me", name: myName, color: myColor, active: true, lastSeen: now },
+      ...remotePeers.filter((p) => now - p.lastSeen < 15000)
+    ];
+    return allPeers.map((c) => ({ id: c.id, name: c.name, color: c.color, active: c.active }));
+  }, [remotePeers, myName, myColor]);
 
   return (
     <div className="relative h-full w-full bg-white">
@@ -654,7 +677,7 @@ export default function WhiteboardPage() {
                   CollabBoard
                 </div>
                 <div data-testid="text-app-subtitle" className="text-xs text-slate-500">
-                  Whiteboard mock · smooth tools · live presence
+                  {isConnected ? `P2P connected · ${peerCount} peer${peerCount !== 1 ? 's' : ''}` : "Connecting..."}
                 </div>
               </div>
             </div>
@@ -906,7 +929,7 @@ export default function WhiteboardPage() {
 
           {/* Presence layer */}
           <div className="pointer-events-none absolute inset-0">
-            {remoteCursors.map((c) => (
+            {remotePeers.map((c) => (
               <div
                 key={c.id}
                 data-testid={`cursor-remote-${c.id}`}
