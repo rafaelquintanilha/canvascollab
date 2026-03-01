@@ -736,7 +736,7 @@ export default function WhiteboardPage() {
           animate={{ opacity: 1, x: 0 }}
           className="pointer-events-auto rounded-2xl border border-slate-200/70 bg-white/85 p-2 shadow-md backdrop-blur cb-noise"
         >
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col items-center gap-2">
             <ToolButton
               testId="button-tool-select"
               label="Select"
@@ -751,7 +751,7 @@ export default function WhiteboardPage() {
               onClick={() => setTool("hand")}
               icon={<Hand className="size-[18px]" />}
             />
-            <div className="my-1 h-px bg-slate-200/70" />
+            <div className="my-1 h-px w-full bg-slate-200/70" />
             <ToolButton
               testId="button-tool-pen"
               label="Pen"
@@ -788,7 +788,7 @@ export default function WhiteboardPage() {
               icon={<Eraser className="size-[18px]" />}
             />
 
-            <div className="my-1 h-px bg-slate-200/70" />
+            <div className="my-1 h-px w-full bg-slate-200/70" />
 
             <ToolButton
               testId="button-undo"
@@ -805,7 +805,7 @@ export default function WhiteboardPage() {
               icon={<Redo2 className="size-[18px]" />}
             />
 
-            <div className="my-1 h-px bg-slate-200/70" />
+            <div className="my-1 h-px w-full bg-slate-200/70" />
 
             <ToolButton
               testId="button-clear"
