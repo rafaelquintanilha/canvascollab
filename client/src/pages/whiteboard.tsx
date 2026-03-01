@@ -731,131 +731,140 @@ export default function WhiteboardPage() {
 
       {/* Left floating toolbar */}
       <div className="pointer-events-none absolute inset-y-0 left-0 z-30 flex items-center pl-4">
-        <motion.div
-          initial={{ opacity: 0, x: -10 }}
-          animate={{ opacity: 1, x: 0 }}
-          className="pointer-events-auto rounded-2xl border border-slate-200/70 bg-white/85 p-2 shadow-md backdrop-blur cb-noise"
-        >
-          <div className="flex flex-col gap-2">
-            <ToolButton
-              testId="button-tool-select"
-              label="Select"
-              active={tool === "select"}
-              onClick={() => setTool("select")}
-              icon={<MousePointer2 className="size-[18px]" />}
-            />
-            <ToolButton
-              testId="button-tool-hand"
-              label="Pan"
-              active={tool === "hand"}
-              onClick={() => setTool("hand")}
-              icon={<Hand className="size-[18px]" />}
-            />
-            <div className="my-1 h-px bg-slate-200/70" />
-            <ToolButton
-              testId="button-tool-pen"
-              label="Pen"
-              active={tool === "pen"}
-              onClick={() => setTool("pen")}
-              icon={<PenTool className="size-[18px]" />}
-            />
-            <ToolButton
-              testId="button-tool-rect"
-              label="Rectangle"
-              active={tool === "rect"}
-              onClick={() => setTool("rect")}
-              icon={<Square className="size-[18px]" />}
-            />
-            <ToolButton
-              testId="button-tool-ellipse"
-              label="Ellipse"
-              active={tool === "ellipse"}
-              onClick={() => setTool("ellipse")}
-              icon={<Circle className="size-[18px]" />}
-            />
-            <ToolButton
-              testId="button-tool-text"
-              label="Text"
-              active={tool === "text"}
-              onClick={() => setTool("text")}
-              icon={<TextCursor className="size-[18px]" />}
-            />
-            <ToolButton
-              testId="button-tool-eraser"
-              label="Eraser"
-              active={tool === "eraser"}
-              onClick={() => setTool("eraser")}
-              icon={<Eraser className="size-[18px]" />}
-            />
+        <div className="flex flex-col items-start gap-3">
+          <motion.div
+            initial={{ opacity: 0, x: -10 }}
+            animate={{ opacity: 1, x: 0 }}
+            className="pointer-events-auto rounded-2xl border border-slate-200/70 bg-white/85 p-2 shadow-md backdrop-blur cb-noise"
+          >
+            <div className="flex flex-col gap-2">
+              <ToolButton
+                testId="button-tool-select"
+                label="Select"
+                active={tool === "select"}
+                onClick={() => setTool("select")}
+                icon={<MousePointer2 className="size-[18px]" />}
+              />
+              <ToolButton
+                testId="button-tool-hand"
+                label="Pan"
+                active={tool === "hand"}
+                onClick={() => setTool("hand")}
+                icon={<Hand className="size-[18px]" />}
+              />
+              <div className="my-1 h-px bg-slate-200/70" />
+              <ToolButton
+                testId="button-tool-pen"
+                label="Pen"
+                active={tool === "pen"}
+                onClick={() => setTool("pen")}
+                icon={<PenTool className="size-[18px]" />}
+              />
+              <ToolButton
+                testId="button-tool-rect"
+                label="Rectangle"
+                active={tool === "rect"}
+                onClick={() => setTool("rect")}
+                icon={<Square className="size-[18px]" />}
+              />
+              <ToolButton
+                testId="button-tool-ellipse"
+                label="Ellipse"
+                active={tool === "ellipse"}
+                onClick={() => setTool("ellipse")}
+                icon={<Circle className="size-[18px]" />}
+              />
+              <ToolButton
+                testId="button-tool-text"
+                label="Text"
+                active={tool === "text"}
+                onClick={() => setTool("text")}
+                icon={<TextCursor className="size-[18px]" />}
+              />
+              <ToolButton
+                testId="button-tool-eraser"
+                label="Eraser"
+                active={tool === "eraser"}
+                onClick={() => setTool("eraser")}
+                icon={<Eraser className="size-[18px]" />}
+              />
 
-            <div className="my-1 h-px bg-slate-200/70" />
+              <div className="my-1 h-px bg-slate-200/70" />
 
-            <ToolButton
-              testId="button-undo"
-              label="Undo"
-              active={false}
-              onClick={undo}
-              icon={<RotateCcw className="size-[18px]" />}
-            />
-            <ToolButton
-              testId="button-redo"
-              label="Redo"
-              active={false}
-              onClick={redo}
-              icon={<Redo2 className="size-[18px]" />}
-            />
+              <ToolButton
+                testId="button-undo"
+                label="Undo"
+                active={false}
+                onClick={undo}
+                icon={<RotateCcw className="size-[18px]" />}
+              />
+              <ToolButton
+                testId="button-redo"
+                label="Redo"
+                active={false}
+                onClick={redo}
+                icon={<Redo2 className="size-[18px]" />}
+              />
 
-            <div className="my-1 h-px bg-slate-200/70" />
+              <div className="my-1 h-px bg-slate-200/70" />
 
-            <ToolButton
-              testId="button-clear"
-              label="Clear board"
-              active={false}
-              onClick={clearBoard}
-              icon={<Trash2 className="size-[18px]" />}
-            />
-          </div>
-
-          <div className="mt-3 rounded-xl border border-slate-200/70 bg-white/70 p-2">
-            <div className="flex items-center justify-between">
-              <div className="text-xs font-medium text-slate-700">Color</div>
-              <div className="text-[11px] text-slate-500">Stroke</div>
+              <ToolButton
+                testId="button-clear"
+                label="Clear board"
+                active={false}
+                onClick={clearBoard}
+                icon={<Trash2 className="size-[18px]" />}
+              />
             </div>
-            <div className="mt-2 grid grid-cols-3 gap-2">
-              {PRESET_COLORS.map((c) => (
-                <ColorDot
-                  key={c.value}
-                  value={c.value}
-                  active={color.toLowerCase() === c.value.toLowerCase()}
-                  onClick={() => {
-                    setColor(c.value);
-                    setFill(c.value === "#3182CE" ? "rgba(49,130,206,0.10)" : "rgba(128,90,213,0.10)");
-                  }}
-                  testId={`button-color-${c.name.toLowerCase()}`}
-                />
-              ))}
-            </div>
+          </motion.div>
 
-            <div className="mt-3">
+          <motion.div
+            initial={{ opacity: 0, x: -10 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.03 }}
+            className="pointer-events-auto rounded-2xl border border-slate-200/70 bg-white/85 p-2 shadow-md backdrop-blur cb-noise"
+          >
+            <div className="rounded-xl border border-slate-200/70 bg-white/70 p-2">
               <div className="flex items-center justify-between">
-                <div className="text-xs font-medium text-slate-700">Size</div>
-                <div data-testid="text-size" className="text-[11px] text-slate-500">
-                  {strokeSize}px
+                <div className="text-xs font-medium text-slate-700">Color</div>
+                <div className="text-[11px] text-slate-500">Stroke</div>
+              </div>
+              <div className="mt-2 grid grid-cols-3 gap-2">
+                {PRESET_COLORS.map((c) => (
+                  <ColorDot
+                    key={c.value}
+                    value={c.value}
+                    active={color.toLowerCase() === c.value.toLowerCase()}
+                    onClick={() => {
+                      setColor(c.value);
+                      setFill(c.value === "#3182CE" ? "rgba(49,130,206,0.10)" : "rgba(128,90,213,0.10)");
+                    }}
+                    testId={`button-color-${c.name.toLowerCase()}`}
+                  />
+                ))}
+              </div>
+
+              <div className="mt-3">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-medium text-slate-700">Size</div>
+                  <div data-testid="text-size" className="text-[11px] text-slate-500">
+                    {strokeSize}px
+                  </div>
+                </div>
+                <div className="mt-2 px-1">
+                  <Slider
+                    data-testid="slider-size"
+                    value={[strokeSize]}
+                    min={1}
+                    max={14}
+                    step={1}
+                    onValueChange={(v) => setStrokeSize(v[0] ?? 3)}
+                  />
                 </div>
               </div>
-              <div className="mt-2 px-1">
-                <Slider
-                  data-testid="slider-size"
-                  value={[strokeSize]}
-                  min={1}
-                  max={14}
-                  step={1}
-                  onValueChange={(v) => setStrokeSize(v[0] ?? 3)}
-                />
-              </div>
             </div>
-          </div>
-        </motion.div>
+          </motion.div>
+        </div>
       </div>
 
       {/* Bottom right zoom controls */}
