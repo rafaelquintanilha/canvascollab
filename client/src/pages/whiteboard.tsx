@@ -4,6 +4,7 @@ import {
   Download,
   Eraser,
   Hand,
+  ImagePlus,
   Minus,
   MousePointer2,
   PenTool,
@@ -63,10 +64,20 @@ type TextItem = {
   fontSize: number;
 };
 
+type ImageItem = {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  src: string;
+};
+
 export type BoardItem =
   | { type: "stroke"; data: Stroke }
   | { type: "shape"; data: Shape }
-  | { type: "text"; data: TextItem };
+  | { type: "text"; data: TextItem }
+  | { type: "image"; data: ImageItem };
 
 function clamp(n: number, a: number, b: number) {
   return Math.min(b, Math.max(a, n));
@@ -193,6 +204,8 @@ export default function WhiteboardPage() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const rafRef = useRef<number | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const imageCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
 
   const [tool, setTool] = useState<Tool>("pen");
   const [color, setColor] = useState<string>("#3182CE");
@@ -406,6 +419,21 @@ export default function WhiteboardPage() {
           const lines = t.text.split("\n");
           for (let i = 0; i < lines.length; i++) {
             ctx.fillText(lines[i], t.x, t.y + i * (t.fontSize + 6));
+          }
+        }
+
+        if (item.type === "image") {
+          const im = item.data;
+          ctx.globalCompositeOperation = "source-over";
+          let cached = imageCacheRef.current.get(im.src);
+          if (!cached) {
+            const img = new Image();
+            img.src = im.src;
+            imageCacheRef.current.set(im.src, img);
+            cached = img;
+          }
+          if (cached.complete && cached.naturalWidth > 0) {
+            ctx.drawImage(cached, im.x, im.y, im.width, im.height);
           }
         }
       }
@@ -648,6 +676,57 @@ export default function WhiteboardPage() {
     );
   };
 
+  const insertImage = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      const img = new Image();
+      img.onload = () => {
+        const maxDim = 400;
+        let w = img.naturalWidth;
+        let h = img.naturalHeight;
+        if (w > maxDim || h > maxDim) {
+          const scale = maxDim / Math.max(w, h);
+          w = Math.round(w * scale);
+          h = Math.round(h * scale);
+        }
+
+        const canvas = canvasRef.current;
+        const container = containerRef.current;
+        let cx = 200;
+        let cy = 200;
+        if (canvas && container) {
+          const rect = container.getBoundingClientRect();
+          const center = toCanvasPoint(
+            rect.left + rect.width / 2,
+            rect.top + rect.height / 2,
+            viewport,
+            rect,
+          );
+          cx = center.x - w / 2;
+          cy = center.y - h / 2;
+        }
+
+        imageCacheRef.current.set(dataUrl, img);
+        pushItem({
+          type: "image",
+          data: { id: uid(), x: cx, y: cy, width: w, height: h, src: dataUrl },
+        });
+      };
+      img.src = dataUrl;
+    };
+    reader.readAsDataURL(file);
+
+    e.target.value = "";
+  };
+
   const collaborators = useMemo(() => {
     const now = Date.now();
     // Include self + remote peers
@@ -780,6 +859,13 @@ export default function WhiteboardPage() {
                 active={tool === "text"}
                 onClick={() => setTool("text")}
                 icon={<TextCursor className="size-[18px]" />}
+              />
+              <ToolButton
+                testId="button-tool-image"
+                label="Insert Image"
+                active={false}
+                onClick={insertImage}
+                icon={<ImagePlus className="size-[18px]" />}
               />
               <ToolButton
                 testId="button-tool-eraser"
@@ -918,6 +1004,14 @@ export default function WhiteboardPage() {
           </Button>
         </motion.div>
       </div>
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleImageUpload}
+      />
 
       {/* Canvas stage */}
       <div className="absolute inset-0">
