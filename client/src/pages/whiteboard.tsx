@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
+import { Kbd } from "@/components/ui/kbd";
 import { Slider } from "@/components/ui/slider";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -136,12 +137,14 @@ function ToolButton({
   icon,
   onClick,
   testId,
+  shortcut,
 }: {
   active?: boolean;
   label: string;
   icon: React.ReactNode;
   onClick: () => void;
   testId: string;
+  shortcut?: string;
 }) {
   return (
     <Tooltip>
@@ -164,6 +167,11 @@ function ToolButton({
       </TooltipTrigger>
       <TooltipContent side="right" className="bg-slate-900 text-white">
         {label}
+        {shortcut && (
+          <span className="ml-2 opacity-70">
+            <Kbd>{shortcut}</Kbd>
+          </span>
+        )}
       </TooltipContent>
     </Tooltip>
   );
@@ -200,6 +208,37 @@ function ColorDot({
   );
 }
 
+function ColorPicker({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (color: string) => void;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <input
+        type="color"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-8 w-8 cursor-pointer rounded border-0 p-0"
+      />
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => {
+          const val = e.target.value;
+          if (/^#[0-9A-Fa-f]{6}$/.test(val)) {
+            onChange(val);
+          }
+        }}
+        placeholder="#000000"
+        className="w-20 rounded border border-slate-200 px-2 py-1 text-xs font-mono uppercase"
+      />
+    </div>
+  );
+}
+
 export default function WhiteboardPage() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -210,6 +249,7 @@ export default function WhiteboardPage() {
   const [tool, setTool] = useState<Tool>("pen");
   const [color, setColor] = useState<string>("#3182CE");
   const [fill, setFill] = useState<string>("rgba(49,130,206,0.10)");
+  const [customColor, setCustomColor] = useState<string>("#3182CE");
   const [strokeSize, setStrokeSize] = useState<number>(3);
   const [zoom, setZoom] = useState<number>(1);
   const [viewport, setViewport] = useState<{ x: number; y: number; zoom: number }>({
@@ -676,6 +716,59 @@ export default function WhiteboardPage() {
     );
   };
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isMac = navigator.platform.toUpperCase().indexOf("MAC") >= 0;
+      const modifier = isMac ? e.metaKey : e.ctrlKey;
+
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      if (!modifier && !e.shiftKey) {
+        switch (e.key.toLowerCase()) {
+          case "v":
+            setTool("select");
+            break;
+          case "h":
+            setTool("hand");
+            break;
+          case "p":
+            setTool("pen");
+            break;
+          case "r":
+            setTool("rect");
+            break;
+          case "o":
+            setTool("ellipse");
+            break;
+          case "t":
+            setTool("text");
+            break;
+          case "e":
+            setTool("eraser");
+            break;
+        }
+      }
+
+      if (modifier) {
+        if (e.key.toLowerCase() === "z" && !e.shiftKey) {
+          e.preventDefault();
+          undo();
+        } else if ((e.key.toLowerCase() === "z" && e.shiftKey) || e.key.toLowerCase() === "y") {
+          e.preventDefault();
+          redo();
+        } else if (e.key.toLowerCase() === "s") {
+          e.preventDefault();
+          saveSnapshot();
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [undo, redo, saveSnapshot]);
+
   const insertImage = () => {
     fileInputRef.current?.click();
   };
@@ -820,6 +913,7 @@ export default function WhiteboardPage() {
               <ToolButton
                 testId="button-tool-select"
                 label="Select"
+                shortcut="V"
                 active={tool === "select"}
                 onClick={() => setTool("select")}
                 icon={<MousePointer2 className="size-[18px]" />}
@@ -827,6 +921,7 @@ export default function WhiteboardPage() {
               <ToolButton
                 testId="button-tool-hand"
                 label="Pan"
+                shortcut="H"
                 active={tool === "hand"}
                 onClick={() => setTool("hand")}
                 icon={<Hand className="size-[18px]" />}
@@ -835,6 +930,7 @@ export default function WhiteboardPage() {
               <ToolButton
                 testId="button-tool-pen"
                 label="Pen"
+                shortcut="P"
                 active={tool === "pen"}
                 onClick={() => setTool("pen")}
                 icon={<PenTool className="size-[18px]" />}
@@ -842,6 +938,7 @@ export default function WhiteboardPage() {
               <ToolButton
                 testId="button-tool-rect"
                 label="Rectangle"
+                shortcut="R"
                 active={tool === "rect"}
                 onClick={() => setTool("rect")}
                 icon={<Square className="size-[18px]" />}
@@ -849,6 +946,7 @@ export default function WhiteboardPage() {
               <ToolButton
                 testId="button-tool-ellipse"
                 label="Ellipse"
+                shortcut="O"
                 active={tool === "ellipse"}
                 onClick={() => setTool("ellipse")}
                 icon={<Circle className="size-[18px]" />}
@@ -856,6 +954,7 @@ export default function WhiteboardPage() {
               <ToolButton
                 testId="button-tool-text"
                 label="Text"
+                shortcut="T"
                 active={tool === "text"}
                 onClick={() => setTool("text")}
                 icon={<TextCursor className="size-[18px]" />}
@@ -870,6 +969,7 @@ export default function WhiteboardPage() {
               <ToolButton
                 testId="button-tool-eraser"
                 label="Eraser"
+                shortcut="E"
                 active={tool === "eraser"}
                 onClick={() => setTool("eraser")}
                 icon={<Eraser className="size-[18px]" />}
@@ -880,6 +980,7 @@ export default function WhiteboardPage() {
               <ToolButton
                 testId="button-undo"
                 label="Undo"
+                shortcut="⌘Z"
                 active={false}
                 onClick={undo}
                 icon={<RotateCcw className="size-[18px]" />}
@@ -887,6 +988,7 @@ export default function WhiteboardPage() {
               <ToolButton
                 testId="button-redo"
                 label="Redo"
+                shortcut="⇧⌘Z"
                 active={false}
                 onClick={redo}
                 icon={<Redo2 className="size-[18px]" />}
@@ -915,7 +1017,17 @@ export default function WhiteboardPage() {
                 <div className="text-xs font-medium text-slate-700">Color</div>
                 <div className="text-[11px] text-slate-500">Stroke</div>
               </div>
-              <div className="mt-2 grid grid-cols-3 gap-2">
+              
+              <ColorPicker
+                value={customColor}
+                onChange={(c) => {
+                  setCustomColor(c);
+                  setColor(c);
+                  setFill(c + "1A");
+                }}
+              />
+
+              <div className="mt-3 grid grid-cols-3 gap-2">
                 {PRESET_COLORS.map((c) => (
                   <ColorDot
                     key={c.value}
@@ -923,6 +1035,7 @@ export default function WhiteboardPage() {
                     active={color.toLowerCase() === c.value.toLowerCase()}
                     onClick={() => {
                       setColor(c.value);
+                      setCustomColor(c.value);
                       setFill(c.value === "#3182CE" ? "rgba(49,130,206,0.10)" : "rgba(128,90,213,0.10)");
                     }}
                     testId={`button-color-${c.name.toLowerCase()}`}
