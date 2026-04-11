@@ -245,6 +245,9 @@ export default function WhiteboardPage() {
   const rafRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const imageCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
+  
+  // Offscreen canvas for drawing content (strokes, shapes, etc.) - eraser affects this layer only
+  const contentCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const [tool, setTool] = useState<Tool>("pen");
   const [color, setColor] = useState<string>("#3182CE");
@@ -357,6 +360,7 @@ export default function WhiteboardPage() {
       const w = Math.max(1, Math.floor(rect.width));
       const h = Math.max(1, Math.floor(rect.height));
 
+      // Initialize or resize main canvas
       if (canvas.width !== Math.floor(w * dpr) || canvas.height !== Math.floor(h * dpr)) {
         canvas.width = Math.floor(w * dpr);
         canvas.height = Math.floor(h * dpr);
@@ -364,9 +368,120 @@ export default function WhiteboardPage() {
         canvas.style.height = `${h}px`;
       }
 
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
+      // Initialize or resize content canvas (offscreen)
+      let contentCanvas = contentCanvasRef.current;
+      if (!contentCanvas) {
+        contentCanvas = document.createElement("canvas");
+        contentCanvasRef.current = contentCanvas;
+      }
+      if (contentCanvas.width !== Math.floor(w * dpr) || contentCanvas.height !== Math.floor(h * dpr)) {
+        contentCanvas.width = Math.floor(w * dpr);
+        contentCanvas.height = Math.floor(h * dpr);
+      }
 
+      const ctx = canvas.getContext("2d");
+      const contentCtx = contentCanvas.getContext("2d");
+      if (!ctx || !contentCtx) return;
+
+      // ===== DRAW CONTENT LAYER (offscreen) =====
+      contentCtx.save();
+      contentCtx.scale(dpr, dpr);
+      
+      // Clear content canvas to transparent
+      contentCtx.clearRect(0, 0, w, h);
+      
+      // Apply viewport transform for content
+      contentCtx.translate(viewport.x, viewport.y);
+      contentCtx.scale(viewport.zoom, viewport.zoom);
+
+      const all: BoardItem[] = [...items];
+      if (activeShape) all.push({ type: "shape", data: activeShape });
+      // Include active stroke on content layer so eraser preview shows correctly
+      if (activeStroke) all.push({ type: "stroke", data: activeStroke });
+
+      for (const item of all) {
+        if (item.type === "stroke") {
+          const s = item.data;
+          if (s.points.length < 2) continue;
+
+          contentCtx.lineCap = "round";
+          contentCtx.lineJoin = "round";
+          contentCtx.lineWidth = s.size;
+          
+          if (s.tool === "eraser") {
+            // Apply eraser effect on content layer only
+            contentCtx.globalCompositeOperation = "destination-out";
+            contentCtx.strokeStyle = "rgba(0,0,0,1)";
+          } else {
+            contentCtx.globalCompositeOperation = "source-over";
+            contentCtx.strokeStyle = s.color;
+          }
+
+          contentCtx.beginPath();
+          contentCtx.moveTo(s.points[0].x, s.points[0].y);
+          for (let i = 1; i < s.points.length; i++) {
+            const p = s.points[i];
+            contentCtx.lineTo(p.x, p.y);
+          }
+          contentCtx.stroke();
+          contentCtx.globalCompositeOperation = "source-over";
+        }
+
+        if (item.type === "shape") {
+          const sh = item.data;
+          contentCtx.globalCompositeOperation = "source-over";
+          contentCtx.lineWidth = sh.strokeWidth;
+          contentCtx.strokeStyle = sh.stroke;
+          contentCtx.fillStyle = sh.fill;
+
+          if (sh.kind === "rect") {
+            contentCtx.beginPath();
+            contentCtx.rect(sh.x, sh.y, sh.w, sh.h);
+            contentCtx.fill();
+            contentCtx.stroke();
+          } else {
+            const cx = sh.x + sh.w / 2;
+            const cy = sh.y + sh.h / 2;
+            const rx = Math.abs(sh.w / 2);
+            const ry = Math.abs(sh.h / 2);
+            contentCtx.beginPath();
+            contentCtx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+            contentCtx.fill();
+            contentCtx.stroke();
+          }
+        }
+
+        if (item.type === "text") {
+          const t = item.data;
+          contentCtx.globalCompositeOperation = "source-over";
+          contentCtx.fillStyle = t.color;
+          contentCtx.font = `${t.fontSize}px Inter, ui-sans-serif, system-ui`;
+          contentCtx.textBaseline = "top";
+          const lines = t.text.split("\n");
+          for (let i = 0; i < lines.length; i++) {
+            contentCtx.fillText(lines[i], t.x, t.y + i * (t.fontSize + 6));
+          }
+        }
+
+        if (item.type === "image") {
+          const im = item.data;
+          contentCtx.globalCompositeOperation = "source-over";
+          let cached = imageCacheRef.current.get(im.src);
+          if (!cached) {
+            const img = new Image();
+            img.src = im.src;
+            imageCacheRef.current.set(im.src, img);
+            cached = img;
+          }
+          if (cached.complete && cached.naturalWidth > 0) {
+            contentCtx.drawImage(cached, im.x, im.y, im.width, im.height);
+          }
+        }
+      }
+      
+      contentCtx.restore();
+
+      // ===== DRAW MAIN CANVAS (background + grid + content) =====
       ctx.save();
       ctx.scale(dpr, dpr);
 
@@ -392,91 +507,8 @@ export default function WhiteboardPage() {
       }
       ctx.stroke();
 
-      // Apply viewport transform
-      ctx.translate(viewport.x, viewport.y);
-      ctx.scale(viewport.zoom, viewport.zoom);
-
-      const all: BoardItem[] = [...items];
-      if (activeShape) all.push({ type: "shape", data: activeShape });
-      if (activeStroke) all.push({ type: "stroke", data: activeStroke });
-
-      for (const item of all) {
-        if (item.type === "stroke") {
-          const s = item.data;
-          if (s.points.length < 2) continue;
-
-          ctx.lineCap = "round";
-          ctx.lineJoin = "round";
-          ctx.lineWidth = s.size;
-          if (s.tool === "eraser") {
-            ctx.globalCompositeOperation = "destination-out";
-            ctx.strokeStyle = "rgba(0,0,0,1)";
-          } else {
-            ctx.globalCompositeOperation = "source-over";
-            ctx.strokeStyle = s.color;
-          }
-
-          ctx.beginPath();
-          ctx.moveTo(s.points[0].x, s.points[0].y);
-          for (let i = 1; i < s.points.length; i++) {
-            const p = s.points[i];
-            ctx.lineTo(p.x, p.y);
-          }
-          ctx.stroke();
-          ctx.globalCompositeOperation = "source-over";
-        }
-
-        if (item.type === "shape") {
-          const sh = item.data;
-          ctx.globalCompositeOperation = "source-over";
-          ctx.lineWidth = sh.strokeWidth;
-          ctx.strokeStyle = sh.stroke;
-          ctx.fillStyle = sh.fill;
-
-          if (sh.kind === "rect") {
-            ctx.beginPath();
-            ctx.rect(sh.x, sh.y, sh.w, sh.h);
-            ctx.fill();
-            ctx.stroke();
-          } else {
-            const cx = sh.x + sh.w / 2;
-            const cy = sh.y + sh.h / 2;
-            const rx = Math.abs(sh.w / 2);
-            const ry = Math.abs(sh.h / 2);
-            ctx.beginPath();
-            ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.stroke();
-          }
-        }
-
-        if (item.type === "text") {
-          const t = item.data;
-          ctx.globalCompositeOperation = "source-over";
-          ctx.fillStyle = t.color;
-          ctx.font = `${t.fontSize}px Inter, ui-sans-serif, system-ui`;
-          ctx.textBaseline = "top";
-          const lines = t.text.split("\n");
-          for (let i = 0; i < lines.length; i++) {
-            ctx.fillText(lines[i], t.x, t.y + i * (t.fontSize + 6));
-          }
-        }
-
-        if (item.type === "image") {
-          const im = item.data;
-          ctx.globalCompositeOperation = "source-over";
-          let cached = imageCacheRef.current.get(im.src);
-          if (!cached) {
-            const img = new Image();
-            img.src = im.src;
-            imageCacheRef.current.set(im.src, img);
-            cached = img;
-          }
-          if (cached.complete && cached.naturalWidth > 0) {
-            ctx.drawImage(cached, im.x, im.y, im.width, im.height);
-          }
-        }
-      }
+      // Composite content layer on top (now with transparent holes where eraser was used)
+      ctx.drawImage(contentCanvas, 0, 0, w, h);
 
       ctx.restore();
     };
