@@ -106,6 +106,49 @@ function hslToCss(hsl: string) {
   return `hsl(${hsl})`;
 }
 
+type Handle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
+
+function getHandleRects(img: ImageItem, hs: number) {
+  const { x, y, width: w, height: h } = img;
+  const cx = x + w / 2;
+  const cy = y + h / 2;
+  return {
+    nw: { x: x - hs / 2, y: y - hs / 2, w: hs, h: hs },
+    n: { x: cx - hs / 2, y: y - hs / 2, w: hs, h: hs },
+    ne: { x: x + w - hs / 2, y: y - hs / 2, w: hs, h: hs },
+    e: { x: x + w - hs / 2, y: cy - hs / 2, w: hs, h: hs },
+    se: { x: x + w - hs / 2, y: y + h - hs / 2, w: hs, h: hs },
+    s: { x: cx - hs / 2, y: y + h - hs / 2, w: hs, h: hs },
+    sw: { x: x - hs / 2, y: y + h - hs / 2, w: hs, h: hs },
+    w: { x: x - hs / 2, y: cy - hs / 2, w: hs, h: hs },
+  } as Record<Handle, { x: number; y: number; w: number; h: number }>;
+}
+
+function hitHandle(p: Point, img: ImageItem, zoom: number): Handle | null {
+  const hs = 12 / zoom;
+  const rects = getHandleRects(img, hs);
+  for (const k of Object.keys(rects) as Handle[]) {
+    const r = rects[k];
+    if (p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h) return k;
+  }
+  return null;
+}
+
+function hitImage(p: Point, img: ImageItem) {
+  return p.x >= img.x && p.x <= img.x + img.width && p.y >= img.y && p.y <= img.y + img.height;
+}
+
+const HANDLE_CURSOR_CLASS: Record<Handle, string> = {
+  n: "cursor-ns-resize",
+  s: "cursor-ns-resize",
+  e: "cursor-ew-resize",
+  w: "cursor-ew-resize",
+  ne: "cursor-nesw-resize",
+  sw: "cursor-nesw-resize",
+  nw: "cursor-nwse-resize",
+  se: "cursor-nwse-resize",
+};
+
 function formatPct(n: number) {
   return `${Math.round(n * 100)}%`;
 }
@@ -277,6 +320,34 @@ export default function WhiteboardPage() {
   const [shapeStart, setShapeStart] = useState<Point | null>(null);
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState<{ x: number; y: number; vx: number; vy: number } | null>(null);
+
+  const [selectedImageId, setSelectedImageId] = useState<string | null>(null);
+  const [dragMode, setDragMode] = useState<
+    | { kind: "move"; startMouse: Point; startImg: ImageItem }
+    | { kind: "resize"; handle: Handle; startMouse: Point; startImg: ImageItem }
+    | null
+  >(null);
+  const [hoverHandle, setHoverHandle] = useState<Handle | null>(null);
+  const [hoverImageId, setHoverImageId] = useState<string | null>(null);
+
+  const updateImage = useCallback((id: string, patch: Partial<ImageItem>) => {
+    setItems((prev) =>
+      prev.map((it) =>
+        it.type === "image" && it.data.id === id
+          ? { type: "image", data: { ...it.data, ...patch } }
+          : it,
+      ),
+    );
+  }, []);
+
+  const findImage = useCallback(
+    (id: string | null): ImageItem | null => {
+      if (!id) return null;
+      const f = items.find((it) => it.type === "image" && it.data.id === id);
+      return f && f.type === "image" ? f.data : null;
+    },
+    [items],
+  );
 
   // Collaboration: handle remote operations
   const handleRemoteDraw = useCallback((item: BoardItem) => {
@@ -478,7 +549,52 @@ export default function WhiteboardPage() {
           }
         }
       }
-      
+
+      if (tool === "select" && selectedImageId) {
+        const selEntry = items.find(
+          (it) => it.type === "image" && it.data.id === selectedImageId,
+        );
+        const sel = selEntry && selEntry.type === "image" ? selEntry.data : null;
+        if (sel) {
+          contentCtx.save();
+          contentCtx.globalCompositeOperation = "source-over";
+          const z = viewport.zoom;
+          contentCtx.strokeStyle = "#3175F1";
+          contentCtx.lineWidth = 1.5 / z;
+          contentCtx.setLineDash([6 / z, 4 / z]);
+          contentCtx.strokeRect(sel.x, sel.y, sel.width, sel.height);
+          contentCtx.setLineDash([]);
+
+          const hs = 10 / z;
+          const handles = getHandleRects(sel, hs);
+          contentCtx.lineWidth = 1 / z;
+          for (const k of Object.keys(handles) as Handle[]) {
+            const r = handles[k];
+            contentCtx.fillStyle = "#ffffff";
+            contentCtx.fillRect(r.x, r.y, r.w, r.h);
+            contentCtx.strokeStyle = "#3175F1";
+            contentCtx.strokeRect(r.x, r.y, r.w, r.h);
+          }
+
+          const label = `${Math.round(sel.width)} × ${Math.round(sel.height)}`;
+          const fontSize = 11 / z;
+          contentCtx.font = `${fontSize}px Inter, ui-sans-serif, system-ui`;
+          contentCtx.textBaseline = "top";
+          const padX = 6 / z;
+          const padY = 3 / z;
+          const textW = contentCtx.measureText(label).width;
+          const boxW = textW + padX * 2;
+          const boxH = fontSize + padY * 2;
+          const labelX = sel.x + sel.width / 2 - boxW / 2;
+          const labelY = sel.y + sel.height + 8 / z;
+          contentCtx.fillStyle = "#3175F1";
+          contentCtx.fillRect(labelX, labelY, boxW, boxH);
+          contentCtx.fillStyle = "#ffffff";
+          contentCtx.fillText(label, labelX + padX, labelY + padY);
+          contentCtx.restore();
+        }
+      }
+
       contentCtx.restore();
 
       // ===== DRAW MAIN CANVAS (background + grid + content) =====
@@ -512,7 +628,7 @@ export default function WhiteboardPage() {
 
       ctx.restore();
     };
-  }, [activeShape, activeStroke, items, viewport.x, viewport.y, viewport.zoom]);
+  }, [activeShape, activeStroke, items, viewport.x, viewport.y, viewport.zoom, selectedImageId, tool]);
 
   useEffect(() => {
     const loop = () => {
@@ -547,9 +663,30 @@ export default function WhiteboardPage() {
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     setIsPointerDown(true);
 
-    if (tool === "hand" || (tool === "select" && (e.button === 1 || e.ctrlKey || e.metaKey || e.shiftKey))) {
+    if (tool === "hand" || (tool === "select" && (e.button === 1 || e.ctrlKey || e.metaKey))) {
       setIsPanning(true);
       setPanStart({ x: e.clientX, y: e.clientY, vx: viewport.x, vy: viewport.y });
+      return;
+    }
+
+    if (tool === "select") {
+      const selected = findImage(selectedImageId);
+      if (selected) {
+        const h = hitHandle(p, selected, viewport.zoom);
+        if (h) {
+          setDragMode({ kind: "resize", handle: h, startMouse: p, startImg: { ...selected } });
+          return;
+        }
+      }
+      for (let i = items.length - 1; i >= 0; i--) {
+        const it = items[i];
+        if (it.type === "image" && hitImage(p, it.data)) {
+          setSelectedImageId(it.data.id);
+          setDragMode({ kind: "move", startMouse: p, startImg: { ...it.data } });
+          return;
+        }
+      }
+      setSelectedImageId(null);
       return;
     }
 
@@ -611,7 +748,90 @@ export default function WhiteboardPage() {
     // Broadcast cursor position to peers
     broadcastCursor(p.x, p.y, true);
 
-    if (!isPointerDown) return;
+    if (!isPointerDown) {
+      if (tool === "select") {
+        const selected = findImage(selectedImageId);
+        const hh = selected ? hitHandle(p, selected, viewport.zoom) : null;
+        setHoverHandle(hh);
+        if (hh) {
+          setHoverImageId(null);
+        } else {
+          let hoverId: string | null = null;
+          for (let i = items.length - 1; i >= 0; i--) {
+            const it = items[i];
+            if (it.type === "image" && hitImage(p, it.data)) {
+              hoverId = it.data.id;
+              break;
+            }
+          }
+          setHoverImageId(hoverId);
+        }
+      } else if (hoverHandle || hoverImageId) {
+        setHoverHandle(null);
+        setHoverImageId(null);
+      }
+      return;
+    }
+
+    if (dragMode) {
+      const start = dragMode.startImg;
+      const dx = p.x - dragMode.startMouse.x;
+      const dy = p.y - dragMode.startMouse.y;
+      if (dragMode.kind === "move") {
+        updateImage(start.id, { x: start.x + dx, y: start.y + dy });
+      } else {
+        const MIN = 10;
+        let nx = start.x;
+        let ny = start.y;
+        let nw = start.width;
+        let nh = start.height;
+        switch (dragMode.handle) {
+          case "e":
+            nw = Math.max(MIN, start.width + dx);
+            break;
+          case "w":
+            nw = Math.max(MIN, start.width - dx);
+            nx = start.x + (start.width - nw);
+            break;
+          case "s":
+            nh = Math.max(MIN, start.height + dy);
+            break;
+          case "n":
+            nh = Math.max(MIN, start.height - dy);
+            ny = start.y + (start.height - nh);
+            break;
+          case "se":
+            nw = Math.max(MIN, start.width + dx);
+            nh = Math.max(MIN, start.height + dy);
+            break;
+          case "ne":
+            nw = Math.max(MIN, start.width + dx);
+            nh = Math.max(MIN, start.height - dy);
+            ny = start.y + (start.height - nh);
+            break;
+          case "sw":
+            nw = Math.max(MIN, start.width - dx);
+            nx = start.x + (start.width - nw);
+            nh = Math.max(MIN, start.height + dy);
+            break;
+          case "nw":
+            nw = Math.max(MIN, start.width - dx);
+            nx = start.x + (start.width - nw);
+            nh = Math.max(MIN, start.height - dy);
+            ny = start.y + (start.height - nh);
+            break;
+        }
+        if (e.shiftKey && dragMode.handle.length === 2) {
+          const aspect = start.width / start.height;
+          if (nw / aspect > nh) nh = nw / aspect;
+          else nw = nh * aspect;
+          if (dragMode.handle.includes("n")) ny = start.y + start.height - nh;
+          if (dragMode.handle.includes("w")) nx = start.x + start.width - nw;
+        }
+        updateImage(start.id, { x: nx, y: ny, width: nw, height: nh });
+      }
+      return;
+    }
 
     if (isPanning && panStart) {
       const dx = e.clientX - panStart.x;
@@ -642,6 +862,11 @@ export default function WhiteboardPage() {
 
   const onPointerUp = () => {
     setIsPointerDown(false);
+
+    if (dragMode) {
+      setDragMode(null);
+      return;
+    }
 
     if (isPanning) {
       setIsPanning(false);
@@ -757,6 +982,20 @@ export default function WhiteboardPage() {
         return;
       }
 
+      if (!modifier && (e.key === "Delete" || e.key === "Backspace") && selectedImageId) {
+        e.preventDefault();
+        setItems((prev) =>
+          prev.filter((it) => !(it.type === "image" && it.data.id === selectedImageId)),
+        );
+        setSelectedImageId(null);
+        return;
+      }
+
+      if (!modifier && e.key === "Escape" && selectedImageId) {
+        setSelectedImageId(null);
+        return;
+      }
+
       if (!modifier && !e.shiftKey) {
         switch (e.key.toLowerCase()) {
           case "v":
@@ -799,7 +1038,7 @@ export default function WhiteboardPage() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [undo, redo, saveSnapshot]);
+  }, [undo, redo, saveSnapshot, selectedImageId]);
 
   const insertImage = () => {
     fileInputRef.current?.click();
@@ -840,10 +1079,13 @@ export default function WhiteboardPage() {
         }
 
         imageCacheRef.current.set(dataUrl, img);
+        const newId = uid();
         pushItem({
           type: "image",
-          data: { id: uid(), x: cx, y: cy, width: w, height: h, src: dataUrl },
+          data: { id: newId, x: cx, y: cy, width: w, height: h, src: dataUrl },
         });
+        setSelectedImageId(newId);
+        setTool("select");
       };
       img.src = dataUrl;
     };
@@ -1166,7 +1408,19 @@ export default function WhiteboardPage() {
             data-testid="canvas-board"
             className={cn(
               "h-full w-full touch-none",
-              tool === "hand" ? "cursor-grab" : tool === "select" ? "cursor-default" : "cursor-crosshair",
+              tool === "hand"
+                ? "cursor-grab"
+                : tool === "select"
+                  ? dragMode?.kind === "resize"
+                    ? HANDLE_CURSOR_CLASS[dragMode.handle]
+                    : dragMode?.kind === "move"
+                      ? "cursor-grabbing"
+                      : hoverHandle
+                        ? HANDLE_CURSOR_CLASS[hoverHandle]
+                        : hoverImageId
+                          ? "cursor-move"
+                          : "cursor-default"
+                  : "cursor-crosshair",
             )}
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
