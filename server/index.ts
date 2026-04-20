@@ -94,7 +94,8 @@ app.use((req, res, next) => {
     {
       port,
       host: "0.0.0.0",
-      reusePort: true,
+      // reusePort unsupported on darwin (ENOTSUP under Node 24); enable elsewhere (Replit/Linux)
+      ...(process.platform !== "darwin" ? { reusePort: true } : {}),
     },
     () => {
       log(`serving on port ${port}`);
