@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  BringToFront,
+  ChevronDown,
+  ChevronUp,
   Circle,
   Download,
   Eraser,
@@ -12,6 +15,7 @@ import {
   Redo2,
   RotateCcw,
   Save,
+  SendToBack,
   Square,
   TextCursor,
   Trash2,
@@ -108,8 +112,29 @@ function hslToCss(hsl: string) {
 
 type Handle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
 
-function getHandleRects(img: ImageItem, hs: number) {
-  const { x, y, width: w, height: h } = img;
+type Bounds = { id: string; type: "image" | "shape"; x: number; y: number; w: number; h: number };
+
+function itemBounds(item: BoardItem): Bounds | null {
+  if (item.type === "image") {
+    const i = item.data;
+    return { id: i.id, type: "image", x: i.x, y: i.y, w: i.width, h: i.height };
+  }
+  if (item.type === "shape") {
+    const s = item.data;
+    return {
+      id: s.id,
+      type: "shape",
+      x: Math.min(s.x, s.x + s.w),
+      y: Math.min(s.y, s.y + s.h),
+      w: Math.abs(s.w),
+      h: Math.abs(s.h),
+    };
+  }
+  return null;
+}
+
+function getHandleRects(b: { x: number; y: number; w: number; h: number }, hs: number) {
+  const { x, y, w, h } = b;
   const cx = x + w / 2;
   const cy = y + h / 2;
   return {
@@ -124,9 +149,9 @@ function getHandleRects(img: ImageItem, hs: number) {
   } as Record<Handle, { x: number; y: number; w: number; h: number }>;
 }
 
-function hitHandle(p: Point, img: ImageItem, zoom: number): Handle | null {
+function hitHandle(p: Point, b: { x: number; y: number; w: number; h: number }, zoom: number): Handle | null {
   const hs = 12 / zoom;
-  const rects = getHandleRects(img, hs);
+  const rects = getHandleRects(b, hs);
   for (const k of Object.keys(rects) as Handle[]) {
     const r = rects[k];
     if (p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h) return k;
@@ -134,8 +159,8 @@ function hitHandle(p: Point, img: ImageItem, zoom: number): Handle | null {
   return null;
 }
 
-function hitImage(p: Point, img: ImageItem) {
-  return p.x >= img.x && p.x <= img.x + img.width && p.y >= img.y && p.y <= img.y + img.height;
+function hitBounds(p: Point, b: { x: number; y: number; w: number; h: number }) {
+  return p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h;
 }
 
 const HANDLE_CURSOR_CLASS: Record<Handle, string> = {
@@ -217,6 +242,71 @@ function ToolButton({
         )}
       </TooltipContent>
     </Tooltip>
+  );
+}
+
+function ArrangeButton({
+  label,
+  icon,
+  onClick,
+  testId,
+  shortcut,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  onClick: () => void;
+  testId: string;
+  shortcut?: string;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          data-testid={testId}
+          onClick={onClick}
+          className="grid size-9 place-items-center rounded-lg text-slate-700 transition-colors hover:bg-slate-100"
+        >
+          {icon}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" className="bg-slate-900 text-white">
+        {label}
+        {shortcut && (
+          <span className="ml-2 opacity-70">
+            <Kbd>{shortcut}</Kbd>
+          </span>
+        )}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+function ContextMenuItem({
+  label,
+  shortcut,
+  onClick,
+  danger,
+}: {
+  label: string;
+  shortcut?: string;
+  onClick: () => void;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex w-full items-center justify-between gap-4 rounded-md px-2.5 py-1.5 text-left text-sm transition-colors",
+        danger
+          ? "text-red-600 hover:bg-red-50"
+          : "text-slate-700 hover:bg-slate-100",
+      )}
+    >
+      <span>{label}</span>
+      {shortcut && <span className="text-[11px] text-slate-400">{shortcut}</span>}
+    </button>
   );
 }
 
@@ -312,7 +402,13 @@ export default function WhiteboardPage() {
     itemsRef.current = items;
   }, [items]);
   
-  const [redoStack, setRedoStack] = useState<BoardItem[]>([]);
+  const [past, setPast] = useState<BoardItem[][]>([]);
+  const [future, setFuture] = useState<BoardItem[][]>([]);
+
+  const commitHistory = useCallback(() => {
+    setPast((p) => [...p, itemsRef.current]);
+    setFuture([]);
+  }, []);
 
   const [isPointerDown, setIsPointerDown] = useState(false);
   const [activeStroke, setActiveStroke] = useState<Stroke | null>(null);
@@ -321,43 +417,102 @@ export default function WhiteboardPage() {
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState<{ x: number; y: number; vx: number; vy: number } | null>(null);
 
-  const [selectedImageId, setSelectedImageId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [dragMode, setDragMode] = useState<
-    | { kind: "move"; startMouse: Point; startImg: ImageItem }
-    | { kind: "resize"; handle: Handle; startMouse: Point; startImg: ImageItem }
+    | { kind: "move"; startMouse: Point; startBounds: Bounds }
+    | { kind: "resize"; handle: Handle; startMouse: Point; startBounds: Bounds }
     | null
   >(null);
   const [hoverHandle, setHoverHandle] = useState<Handle | null>(null);
-  const [hoverImageId, setHoverImageId] = useState<string | null>(null);
+  const [hoverItemId, setHoverItemId] = useState<string | null>(null);
+  const dragPreSnapshotRef = useRef<BoardItem[] | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: string } | null>(
+    null,
+  );
 
-  const updateImage = useCallback((id: string, patch: Partial<ImageItem>) => {
-    setItems((prev) =>
-      prev.map((it) =>
-        it.type === "image" && it.data.id === id
-          ? { type: "image", data: { ...it.data, ...patch } }
-          : it,
-      ),
-    );
-  }, []);
+  const updateItemBounds = useCallback(
+    (id: string, b: { x: number; y: number; w: number; h: number }) => {
+      setItems((prev) =>
+        prev.map((it) => {
+          if (it.type === "image" && it.data.id === id) {
+            return { type: "image", data: { ...it.data, x: b.x, y: b.y, width: b.w, height: b.h } };
+          }
+          if (it.type === "shape" && it.data.id === id) {
+            return { type: "shape", data: { ...it.data, x: b.x, y: b.y, w: b.w, h: b.h } };
+          }
+          return it;
+        }),
+      );
+    },
+    [],
+  );
 
-  const findImage = useCallback(
-    (id: string | null): ImageItem | null => {
+  const findBounds = useCallback(
+    (id: string | null): Bounds | null => {
       if (!id) return null;
-      const f = items.find((it) => it.type === "image" && it.data.id === id);
-      return f && f.type === "image" ? f.data : null;
+      const f = items.find(
+        (it) =>
+          (it.type === "image" && it.data.id === id) ||
+          (it.type === "shape" && it.data.id === id),
+      );
+      return f ? itemBounds(f) : null;
     },
     [items],
+  );
+
+  const recolorSelected = useCallback(
+    (stroke: string, fill: string) => {
+      if (!selectedId) return;
+      const target = itemsRef.current.find(
+        (it) => it.type === "shape" && it.data.id === selectedId,
+      );
+      if (!target) return;
+      commitHistory();
+      setItems((prev) =>
+        prev.map((it) =>
+          it.type === "shape" && it.data.id === selectedId
+            ? { type: "shape", data: { ...it.data, stroke, fill } }
+            : it,
+        ),
+      );
+    },
+    [selectedId, commitHistory],
+  );
+
+  const reorderSelected = useCallback(
+    (mode: "front" | "back" | "forward" | "backward") => {
+      if (!selectedId) return;
+      const prev = itemsRef.current;
+      const idx = prev.findIndex(
+        (it) =>
+          (it.type === "image" || it.type === "shape") && it.data.id === selectedId,
+      );
+      if (idx === -1) return;
+      let target = idx;
+      if (mode === "front") target = prev.length - 1;
+      else if (mode === "back") target = 0;
+      else if (mode === "forward") target = Math.min(prev.length - 1, idx + 1);
+      else target = Math.max(0, idx - 1);
+      if (target === idx) return;
+      commitHistory();
+      const next = prev.slice();
+      const [moved] = next.splice(idx, 1);
+      next.splice(target, 0, moved);
+      setItems(next);
+    },
+    [selectedId, commitHistory],
   );
 
   // Collaboration: handle remote operations
   const handleRemoteDraw = useCallback((item: BoardItem) => {
     setItems((prev) => [...prev, item]);
-    setRedoStack([]);
+    setFuture([]);
   }, []);
 
   const handleRemoteClear = useCallback(() => {
     setItems([]);
-    setRedoStack([]);
+    setPast([]);
+    setFuture([]);
     setActiveShape(null);
     setActiveStroke(null);
   }, []);
@@ -392,7 +547,7 @@ export default function WhiteboardPage() {
       });
       return [...prev, ...uniqueNewItems];
     });
-    setRedoStack([]);
+    setFuture([]);
   }, []);
 
   const {
@@ -550,11 +705,13 @@ export default function WhiteboardPage() {
         }
       }
 
-      if (tool === "select" && selectedImageId) {
+      if (tool === "select" && selectedId) {
         const selEntry = items.find(
-          (it) => it.type === "image" && it.data.id === selectedImageId,
+          (it) =>
+            (it.type === "image" && it.data.id === selectedId) ||
+            (it.type === "shape" && it.data.id === selectedId),
         );
-        const sel = selEntry && selEntry.type === "image" ? selEntry.data : null;
+        const sel = selEntry ? itemBounds(selEntry) : null;
         if (sel) {
           contentCtx.save();
           contentCtx.globalCompositeOperation = "source-over";
@@ -562,7 +719,7 @@ export default function WhiteboardPage() {
           contentCtx.strokeStyle = "#3175F1";
           contentCtx.lineWidth = 1.5 / z;
           contentCtx.setLineDash([6 / z, 4 / z]);
-          contentCtx.strokeRect(sel.x, sel.y, sel.width, sel.height);
+          contentCtx.strokeRect(sel.x, sel.y, sel.w, sel.h);
           contentCtx.setLineDash([]);
 
           const hs = 10 / z;
@@ -576,7 +733,7 @@ export default function WhiteboardPage() {
             contentCtx.strokeRect(r.x, r.y, r.w, r.h);
           }
 
-          const label = `${Math.round(sel.width)} × ${Math.round(sel.height)}`;
+          const label = `${Math.round(sel.w)} × ${Math.round(sel.h)}`;
           const fontSize = 11 / z;
           contentCtx.font = `${fontSize}px Inter, ui-sans-serif, system-ui`;
           contentCtx.textBaseline = "top";
@@ -585,8 +742,8 @@ export default function WhiteboardPage() {
           const textW = contentCtx.measureText(label).width;
           const boxW = textW + padX * 2;
           const boxH = fontSize + padY * 2;
-          const labelX = sel.x + sel.width / 2 - boxW / 2;
-          const labelY = sel.y + sel.height + 8 / z;
+          const labelX = sel.x + sel.w / 2 - boxW / 2;
+          const labelY = sel.y + sel.h + 8 / z;
           contentCtx.fillStyle = "#3175F1";
           contentCtx.fillRect(labelX, labelY, boxW, boxH);
           contentCtx.fillStyle = "#ffffff";
@@ -628,7 +785,7 @@ export default function WhiteboardPage() {
 
       ctx.restore();
     };
-  }, [activeShape, activeStroke, items, viewport.x, viewport.y, viewport.zoom, selectedImageId, tool]);
+  }, [activeShape, activeStroke, items, viewport.x, viewport.y, viewport.zoom, selectedId, tool]);
 
   useEffect(() => {
     const loop = () => {
@@ -648,8 +805,8 @@ export default function WhiteboardPage() {
   }, [draw]);
 
   const pushItem = (item: BoardItem) => {
+    commitHistory();
     setItems((prev) => [...prev, item]);
-    setRedoStack([]);
     broadcastDraw(item);
   };
 
@@ -662,6 +819,7 @@ export default function WhiteboardPage() {
 
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     setIsPointerDown(true);
+    if (contextMenu) setContextMenu(null);
 
     if (tool === "hand" || (tool === "select" && (e.button === 1 || e.ctrlKey || e.metaKey))) {
       setIsPanning(true);
@@ -670,23 +828,26 @@ export default function WhiteboardPage() {
     }
 
     if (tool === "select") {
-      const selected = findImage(selectedImageId);
+      const selected = findBounds(selectedId);
       if (selected) {
         const h = hitHandle(p, selected, viewport.zoom);
         if (h) {
-          setDragMode({ kind: "resize", handle: h, startMouse: p, startImg: { ...selected } });
+          dragPreSnapshotRef.current = itemsRef.current;
+          setDragMode({ kind: "resize", handle: h, startMouse: p, startBounds: selected });
           return;
         }
       }
       for (let i = items.length - 1; i >= 0; i--) {
         const it = items[i];
-        if (it.type === "image" && hitImage(p, it.data)) {
-          setSelectedImageId(it.data.id);
-          setDragMode({ kind: "move", startMouse: p, startImg: { ...it.data } });
+        const b = itemBounds(it);
+        if (b && hitBounds(p, b)) {
+          setSelectedId(b.id);
+          dragPreSnapshotRef.current = itemsRef.current;
+          setDragMode({ kind: "move", startMouse: p, startBounds: b });
           return;
         }
       }
-      setSelectedImageId(null);
+      setSelectedId(null);
       return;
     }
 
@@ -750,85 +911,90 @@ export default function WhiteboardPage() {
 
     if (!isPointerDown) {
       if (tool === "select") {
-        const selected = findImage(selectedImageId);
+        const selected = findBounds(selectedId);
         const hh = selected ? hitHandle(p, selected, viewport.zoom) : null;
         setHoverHandle(hh);
         if (hh) {
-          setHoverImageId(null);
+          setHoverItemId(null);
         } else {
           let hoverId: string | null = null;
           for (let i = items.length - 1; i >= 0; i--) {
-            const it = items[i];
-            if (it.type === "image" && hitImage(p, it.data)) {
-              hoverId = it.data.id;
+            const b = itemBounds(items[i]);
+            if (b && hitBounds(p, b)) {
+              hoverId = b.id;
               break;
             }
           }
-          setHoverImageId(hoverId);
+          setHoverItemId(hoverId);
         }
-      } else if (hoverHandle || hoverImageId) {
+      } else if (hoverHandle || hoverItemId) {
         setHoverHandle(null);
-        setHoverImageId(null);
+        setHoverItemId(null);
       }
       return;
     }
 
     if (dragMode) {
-      const start = dragMode.startImg;
+      const start = dragMode.startBounds;
       const dx = p.x - dragMode.startMouse.x;
       const dy = p.y - dragMode.startMouse.y;
+      if (dragPreSnapshotRef.current && (dx !== 0 || dy !== 0)) {
+        setPast((pst) => [...pst, dragPreSnapshotRef.current!]);
+        setFuture([]);
+        dragPreSnapshotRef.current = null;
+      }
       if (dragMode.kind === "move") {
-        updateImage(start.id, { x: start.x + dx, y: start.y + dy });
+        updateItemBounds(start.id, { x: start.x + dx, y: start.y + dy, w: start.w, h: start.h });
       } else {
         const MIN = 10;
         let nx = start.x;
         let ny = start.y;
-        let nw = start.width;
-        let nh = start.height;
+        let nw = start.w;
+        let nh = start.h;
         switch (dragMode.handle) {
           case "e":
-            nw = Math.max(MIN, start.width + dx);
+            nw = Math.max(MIN, start.w + dx);
             break;
           case "w":
-            nw = Math.max(MIN, start.width - dx);
-            nx = start.x + (start.width - nw);
+            nw = Math.max(MIN, start.w - dx);
+            nx = start.x + (start.w - nw);
             break;
           case "s":
-            nh = Math.max(MIN, start.height + dy);
+            nh = Math.max(MIN, start.h + dy);
             break;
           case "n":
-            nh = Math.max(MIN, start.height - dy);
-            ny = start.y + (start.height - nh);
+            nh = Math.max(MIN, start.h - dy);
+            ny = start.y + (start.h - nh);
             break;
           case "se":
-            nw = Math.max(MIN, start.width + dx);
-            nh = Math.max(MIN, start.height + dy);
+            nw = Math.max(MIN, start.w + dx);
+            nh = Math.max(MIN, start.h + dy);
             break;
           case "ne":
-            nw = Math.max(MIN, start.width + dx);
-            nh = Math.max(MIN, start.height - dy);
-            ny = start.y + (start.height - nh);
+            nw = Math.max(MIN, start.w + dx);
+            nh = Math.max(MIN, start.h - dy);
+            ny = start.y + (start.h - nh);
             break;
           case "sw":
-            nw = Math.max(MIN, start.width - dx);
-            nx = start.x + (start.width - nw);
-            nh = Math.max(MIN, start.height + dy);
+            nw = Math.max(MIN, start.w - dx);
+            nx = start.x + (start.w - nw);
+            nh = Math.max(MIN, start.h + dy);
             break;
           case "nw":
-            nw = Math.max(MIN, start.width - dx);
-            nx = start.x + (start.width - nw);
-            nh = Math.max(MIN, start.height - dy);
-            ny = start.y + (start.height - nh);
+            nw = Math.max(MIN, start.w - dx);
+            nx = start.x + (start.w - nw);
+            nh = Math.max(MIN, start.h - dy);
+            ny = start.y + (start.h - nh);
             break;
         }
-        if (e.shiftKey && dragMode.handle.length === 2) {
-          const aspect = start.width / start.height;
+        if (start.type === "image" && dragMode.handle.length === 2) {
+          const aspect = start.w / start.h;
           if (nw / aspect > nh) nh = nw / aspect;
           else nw = nh * aspect;
-          if (dragMode.handle.includes("n")) ny = start.y + start.height - nh;
-          if (dragMode.handle.includes("w")) nx = start.x + start.width - nw;
+          if (dragMode.handle.includes("n")) ny = start.y + start.h - nh;
+          if (dragMode.handle.includes("w")) nx = start.x + start.w - nw;
         }
-        updateImage(start.id, { x: nx, y: ny, width: nw, height: nh });
+        updateItemBounds(start.id, { x: nx, y: ny, w: nw, h: nh });
       }
       return;
     }
@@ -864,6 +1030,7 @@ export default function WhiteboardPage() {
     setIsPointerDown(false);
 
     if (dragMode) {
+      dragPreSnapshotRef.current = null;
       setDragMode(null);
       return;
     }
@@ -920,27 +1087,48 @@ export default function WhiteboardPage() {
   };
 
   const undo = () => {
-    setItems((prev) => {
-      if (prev.length === 0) return prev;
-      const next = prev.slice(0, -1);
-      const popped = prev[prev.length - 1];
-      setRedoStack((r) => [...r, popped]);
-      return next;
+    setPast((p) => {
+      if (p.length === 0) return p;
+      const prevSnap = p[p.length - 1];
+      setFuture((f) => [...f, itemsRef.current]);
+      setItems(prevSnap);
+      setSelectedId((id) =>
+        id &&
+        prevSnap.some(
+          (it) =>
+            (it.type === "image" && it.data.id === id) ||
+            (it.type === "shape" && it.data.id === id),
+        )
+          ? id
+          : null,
+      );
+      return p.slice(0, -1);
     });
   };
 
   const redo = () => {
-    setRedoStack((prev) => {
-      if (prev.length === 0) return prev;
-      const popped = prev[prev.length - 1];
-      setItems((itemsPrev) => [...itemsPrev, popped]);
-      return prev.slice(0, -1);
+    setFuture((f) => {
+      if (f.length === 0) return f;
+      const nextSnap = f[f.length - 1];
+      setPast((p) => [...p, itemsRef.current]);
+      setItems(nextSnap);
+      setSelectedId((id) =>
+        id &&
+        nextSnap.some(
+          (it) =>
+            (it.type === "image" && it.data.id === id) ||
+            (it.type === "shape" && it.data.id === id),
+        )
+          ? id
+          : null,
+      );
+      return f.slice(0, -1);
     });
   };
 
   const clearBoard = () => {
+    commitHistory();
     setItems([]);
-    setRedoStack([]);
     setActiveShape(null);
     setActiveStroke(null);
     broadcastClear();
@@ -974,6 +1162,17 @@ export default function WhiteboardPage() {
   };
 
   useEffect(() => {
+    if (!contextMenu) return;
+    const onDocDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && target.closest('[data-testid="context-menu"]')) return;
+      setContextMenu(null);
+    };
+    document.addEventListener("mousedown", onDocDown);
+    return () => document.removeEventListener("mousedown", onDocDown);
+  }, [contextMenu]);
+
+  useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const isMac = navigator.platform.toUpperCase().indexOf("MAC") >= 0;
       const modifier = isMac ? e.metaKey : e.ctrlKey;
@@ -982,17 +1181,25 @@ export default function WhiteboardPage() {
         return;
       }
 
-      if (!modifier && (e.key === "Delete" || e.key === "Backspace") && selectedImageId) {
+      if (!modifier && (e.key === "Delete" || e.key === "Backspace") && selectedId) {
         e.preventDefault();
+        commitHistory();
         setItems((prev) =>
-          prev.filter((it) => !(it.type === "image" && it.data.id === selectedImageId)),
+          prev.filter(
+            (it) =>
+              !(
+                (it.type === "image" && it.data.id === selectedId) ||
+                (it.type === "shape" && it.data.id === selectedId)
+              ),
+          ),
         );
-        setSelectedImageId(null);
+        setSelectedId(null);
         return;
       }
 
-      if (!modifier && e.key === "Escape" && selectedImageId) {
-        setSelectedImageId(null);
+      if (!modifier && e.key === "Escape") {
+        if (contextMenu) setContextMenu(null);
+        if (selectedId) setSelectedId(null);
         return;
       }
 
@@ -1032,13 +1239,19 @@ export default function WhiteboardPage() {
         } else if (e.key.toLowerCase() === "s") {
           e.preventDefault();
           saveSnapshot();
+        } else if (e.code === "BracketRight" && selectedId) {
+          e.preventDefault();
+          reorderSelected(e.shiftKey ? "front" : "forward");
+        } else if (e.code === "BracketLeft" && selectedId) {
+          e.preventDefault();
+          reorderSelected(e.shiftKey ? "back" : "backward");
         }
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [undo, redo, saveSnapshot, selectedImageId]);
+  }, [undo, redo, saveSnapshot, selectedId, reorderSelected, contextMenu]);
 
   const insertImage = () => {
     fileInputRef.current?.click();
@@ -1084,7 +1297,7 @@ export default function WhiteboardPage() {
           type: "image",
           data: { id: newId, x: cx, y: cy, width: w, height: h, src: dataUrl },
         });
-        setSelectedImageId(newId);
+        setSelectedId(newId);
         setTool("select");
       };
       img.src = dataUrl;
@@ -1295,9 +1508,11 @@ export default function WhiteboardPage() {
               <ColorPicker
                 value={customColor}
                 onChange={(c) => {
+                  const f = c + "1A";
                   setCustomColor(c);
                   setColor(c);
-                  setFill(c + "1A");
+                  setFill(f);
+                  recolorSelected(c, f);
                 }}
               />
 
@@ -1308,9 +1523,16 @@ export default function WhiteboardPage() {
                     value={c.value}
                     active={color.toLowerCase() === c.value.toLowerCase()}
                     onClick={() => {
+                      const f =
+                        c.value === "#3182CE"
+                          ? "rgba(49,130,206,0.10)"
+                          : c.value === "#805AD5"
+                            ? "rgba(128,90,213,0.10)"
+                            : c.value + "1A";
                       setColor(c.value);
                       setCustomColor(c.value);
-                      setFill(c.value === "#3182CE" ? "rgba(49,130,206,0.10)" : "rgba(128,90,213,0.10)");
+                      setFill(f);
+                      recolorSelected(c.value, f);
                     }}
                     testId={`button-color-${c.name.toLowerCase()}`}
                   />
@@ -1339,6 +1561,111 @@ export default function WhiteboardPage() {
           </motion.div>
         </div>
       </div>
+
+      {/* Contextual arrange toolbar */}
+      {selectedId && (
+        <motion.div
+          initial={{ opacity: 0, y: -6 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="pointer-events-auto absolute left-1/2 top-4 z-40 -translate-x-1/2"
+          data-testid="arrange-toolbar"
+        >
+          <div className="flex items-center gap-1 rounded-2xl border border-slate-200/70 bg-white/90 p-1 shadow-md backdrop-blur cb-noise">
+            <ArrangeButton
+              testId="button-bring-to-front"
+              label="Bring to front"
+              shortcut="⇧⌘]"
+              onClick={() => reorderSelected("front")}
+              icon={<BringToFront className="size-[16px]" />}
+            />
+            <ArrangeButton
+              testId="button-bring-forward"
+              label="Bring forward"
+              shortcut="⌘]"
+              onClick={() => reorderSelected("forward")}
+              icon={<ChevronUp className="size-[16px]" />}
+            />
+            <ArrangeButton
+              testId="button-send-backward"
+              label="Send backward"
+              shortcut="⌘["
+              onClick={() => reorderSelected("backward")}
+              icon={<ChevronDown className="size-[16px]" />}
+            />
+            <ArrangeButton
+              testId="button-send-to-back"
+              label="Send to back"
+              shortcut="⇧⌘["
+              onClick={() => reorderSelected("back")}
+              icon={<SendToBack className="size-[16px]" />}
+            />
+          </div>
+        </motion.div>
+      )}
+
+      {/* Right-click context menu */}
+      {contextMenu && (
+        <div
+          className="pointer-events-auto fixed z-50 w-56 rounded-xl border border-slate-200/70 bg-white/95 p-1 text-sm shadow-lg backdrop-blur cb-noise"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          data-testid="context-menu"
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <ContextMenuItem
+            label="Bring to front"
+            shortcut="⇧⌘]"
+            onClick={() => {
+              reorderSelected("front");
+              setContextMenu(null);
+            }}
+          />
+          <ContextMenuItem
+            label="Bring forward"
+            shortcut="⌘]"
+            onClick={() => {
+              reorderSelected("forward");
+              setContextMenu(null);
+            }}
+          />
+          <ContextMenuItem
+            label="Send backward"
+            shortcut="⌘["
+            onClick={() => {
+              reorderSelected("backward");
+              setContextMenu(null);
+            }}
+          />
+          <ContextMenuItem
+            label="Send to back"
+            shortcut="⇧⌘["
+            onClick={() => {
+              reorderSelected("back");
+              setContextMenu(null);
+            }}
+          />
+          <div className="my-1 h-px bg-slate-200/70" />
+          <ContextMenuItem
+            label="Delete"
+            shortcut="⌫"
+            danger
+            onClick={() => {
+              const id = contextMenu.id;
+              commitHistory();
+              setItems((prev) =>
+                prev.filter(
+                  (it) =>
+                    !(
+                      (it.type === "image" && it.data.id === id) ||
+                      (it.type === "shape" && it.data.id === id)
+                    ),
+                ),
+              );
+              setSelectedId(null);
+              setContextMenu(null);
+            }}
+          />
+        </div>
+      )}
 
       {/* Bottom right zoom controls */}
       <div className="pointer-events-none absolute bottom-0 right-0 z-30 p-4">
@@ -1417,7 +1744,7 @@ export default function WhiteboardPage() {
                       ? "cursor-grabbing"
                       : hoverHandle
                         ? HANDLE_CURSOR_CLASS[hoverHandle]
-                        : hoverImageId
+                        : hoverItemId
                           ? "cursor-move"
                           : "cursor-default"
                   : "cursor-crosshair",
@@ -1427,6 +1754,22 @@ export default function WhiteboardPage() {
             onPointerUp={onPointerUp}
             onPointerCancel={onPointerUp}
             onWheel={onWheel}
+            onContextMenu={(e) => {
+              const canvas = canvasRef.current;
+              if (!canvas) return;
+              const rect = canvas.getBoundingClientRect();
+              const p = toCanvasPoint(e.clientX, e.clientY, viewport, rect);
+              for (let i = items.length - 1; i >= 0; i--) {
+                const b = itemBounds(items[i]);
+                if (b && hitBounds(p, b)) {
+                  e.preventDefault();
+                  setSelectedId(b.id);
+                  setContextMenu({ x: e.clientX, y: e.clientY, id: b.id });
+                  return;
+                }
+              }
+              setContextMenu(null);
+            }}
           />
 
           {/* Presence layer */}
