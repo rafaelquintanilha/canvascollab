@@ -1,0 +1,39 @@
+name: Deploy Canvascollab
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: canvascollab-devvps-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Trigger devvps deploy
+        env:
+          DEPLOY_KEY: ${{ secrets.CANVASCOLLAB_DEVVPS_SSH_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${DEPLOY_KEY}" ]; then
+            echo "CANVASCOLLAB_DEVVPS_SSH_KEY is not configured" >&2
+            exit 1
+          fi
+
+          mkdir -p ~/.ssh
+          printf '%s\n' "${DEPLOY_KEY}" > ~/.ssh/canvascollab_devvps
+          chmod 600 ~/.ssh/canvascollab_devvps
+          ssh-keyscan -H 69.62.89.22 >> ~/.ssh/known_hosts
+
+          ssh -i ~/.ssh/canvascollab_devvps root@69.62.89.22 /opt/apps/scripts/deploy-canvascollab.sh
