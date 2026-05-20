@@ -88,6 +88,42 @@ function clamp(n: number, a: number, b: number) {
   return Math.min(b, Math.max(a, n));
 }
 
+function parseStrokeRgb(stroke: string): { r: number; g: number; b: number } | null {
+  const hex = stroke.trim();
+  const match = /^#([0-9A-Fa-f]{3,8})$/.exec(hex);
+  if (!match) return null;
+  let h = match[1];
+  if (h.length === 3) {
+    h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+  }
+  if (h.length < 6) return null;
+  return {
+    r: parseInt(h.slice(0, 2), 16),
+    g: parseInt(h.slice(2, 4), 16),
+    b: parseInt(h.slice(4, 6), 16),
+  };
+}
+
+function getFillOpacity(fill: string): number {
+  const rgba = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+)\s*)?\)$/i.exec(
+    fill.trim(),
+  );
+  if (rgba) {
+    const alpha = rgba[4];
+    return alpha !== undefined ? clamp(parseFloat(alpha), 0, 1) : 1;
+  }
+  const hex8 = /^#([0-9A-Fa-f]{6})([0-9A-Fa-f]{2})$/i.exec(fill.trim());
+  if (hex8) return parseInt(hex8[2], 16) / 255;
+  return 1;
+}
+
+function makeShapeFill(stroke: string, opacity: number): string {
+  const a = clamp(opacity, 0, 1);
+  const rgb = parseStrokeRgb(stroke);
+  if (!rgb) return `rgba(49,130,206,${a})`;
+  return `rgba(${rgb.r},${rgb.g},${rgb.b},${a})`;
+}
+
 function uid() {
   return Math.random().toString(16).slice(2) + Date.now().toString(16);
 }
@@ -384,7 +420,8 @@ export default function WhiteboardPage() {
 
   const [tool, setTool] = useState<Tool>("pen");
   const [color, setColor] = useState<string>("#3182CE");
-  const [fill, setFill] = useState<string>("rgba(49,130,206,0.10)");
+  const [fill, setFill] = useState<string>(() => makeShapeFill("#3182CE", 0.1));
+  const [fillOpacity, setFillOpacity] = useState(0.1);
   const [customColor, setCustomColor] = useState<string>("#3182CE");
   const [strokeSize, setStrokeSize] = useState<number>(3);
   const [zoom, setZoom] = useState<number>(1);
@@ -461,7 +498,7 @@ export default function WhiteboardPage() {
   );
 
   const recolorSelected = useCallback(
-    (stroke: string, fill: string) => {
+    (stroke: string, nextFill: string) => {
       if (!selectedId) return;
       const target = itemsRef.current.find(
         (it) => it.type === "shape" && it.data.id === selectedId,
@@ -471,13 +508,52 @@ export default function WhiteboardPage() {
       setItems((prev) =>
         prev.map((it) =>
           it.type === "shape" && it.data.id === selectedId
-            ? { type: "shape", data: { ...it.data, stroke, fill } }
+            ? { type: "shape", data: { ...it.data, stroke, fill: nextFill } }
             : it,
         ),
       );
     },
     [selectedId, commitHistory],
   );
+
+  const applyFillOpacity = useCallback(
+    (opacity: number) => {
+      const o = clamp(opacity, 0, 1);
+      setFillOpacity(o);
+      const selectedShape = itemsRef.current.find(
+        (it): it is { type: "shape"; data: Shape } =>
+          it.type === "shape" && it.data.id === selectedId,
+      );
+      const strokeForFill = selectedShape?.data.stroke ?? color;
+      const nextFill = makeShapeFill(strokeForFill, o);
+      setFill(nextFill);
+      if (!selectedId || !selectedShape) return;
+      commitHistory();
+      setItems((prev) =>
+        prev.map((it) =>
+          it.type === "shape" && it.data.id === selectedId
+            ? { type: "shape", data: { ...it.data, fill: makeShapeFill(it.data.stroke, o) } }
+            : it,
+        ),
+      );
+    },
+    [selectedId, color, commitHistory],
+  );
+
+  useEffect(() => {
+    if (!selectedId) return;
+    const shape = itemsRef.current.find(
+      (it): it is { type: "shape"; data: Shape } =>
+        it.type === "shape" && it.data.id === selectedId,
+    );
+    if (!shape) return;
+    const { stroke, fill } = shape.data;
+    setColor(stroke);
+    setCustomColor(stroke);
+    const opacity = getFillOpacity(fill);
+    setFillOpacity(opacity);
+    setFill(fill);
+  }, [selectedId]);
 
   const reorderSelected = useCallback(
     (mode: "front" | "back" | "forward" | "backward") => {
@@ -873,7 +949,7 @@ export default function WhiteboardPage() {
         w: 0,
         h: 0,
         stroke: color,
-        fill,
+        fill: makeShapeFill(color, fillOpacity),
         strokeWidth: 2,
       };
       setActiveShape(sh);
@@ -1508,7 +1584,7 @@ export default function WhiteboardPage() {
               <ColorPicker
                 value={customColor}
                 onChange={(c) => {
-                  const f = c + "1A";
+                  const f = makeShapeFill(c, fillOpacity);
                   setCustomColor(c);
                   setColor(c);
                   setFill(f);
@@ -1523,12 +1599,7 @@ export default function WhiteboardPage() {
                     value={c.value}
                     active={color.toLowerCase() === c.value.toLowerCase()}
                     onClick={() => {
-                      const f =
-                        c.value === "#3182CE"
-                          ? "rgba(49,130,206,0.10)"
-                          : c.value === "#805AD5"
-                            ? "rgba(128,90,213,0.10)"
-                            : c.value + "1A";
+                      const f = makeShapeFill(c.value, fillOpacity);
                       setColor(c.value);
                       setCustomColor(c.value);
                       setFill(f);
@@ -1538,6 +1609,29 @@ export default function WhiteboardPage() {
                   />
                 ))}
               </div>
+
+              {(tool === "rect" ||
+                tool === "ellipse" ||
+                items.some((it) => it.type === "shape" && it.data.id === selectedId)) && (
+                <div className="mt-3">
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-medium text-slate-700">Fill opacity</div>
+                    <div data-testid="text-fill-opacity" className="text-[11px] text-slate-500">
+                      {Math.round(fillOpacity * 100)}%
+                    </div>
+                  </div>
+                  <div className="mt-2 px-1">
+                    <Slider
+                      data-testid="slider-fill-opacity"
+                      value={[Math.round(fillOpacity * 100)]}
+                      min={0}
+                      max={100}
+                      step={1}
+                      onValueChange={(v) => applyFillOpacity((v[0] ?? 0) / 100)}
+                    />
+                  </div>
+                </div>
+              )}
 
               <div className="mt-3">
                 <div className="flex items-center justify-between">
