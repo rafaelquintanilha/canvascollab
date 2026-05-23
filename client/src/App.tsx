@@ -9,6 +9,7 @@ import WhiteboardPage from "@/pages/whiteboard";
 function Router() {
   return (
     <Switch>
+      <Route path="/c/:roomId" component={WhiteboardPage} />
       <Route path="/" component={WhiteboardPage} />
       <Route component={NotFound} />
     </Switch>
