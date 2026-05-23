@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { BoardItem } from "../pages/whiteboard";
 
 type PeerId = string;
@@ -11,6 +11,12 @@ interface PeerInfo {
   dataChannel?: RTCDataChannel;
   connected: boolean;
   isInitiator: boolean;
+}
+
+interface PeerIdentity {
+  id: PeerId;
+  name: string;
+  color: string;
 }
 
 interface CursorUpdate {
@@ -39,11 +45,19 @@ interface SyncResponse {
   items: BoardItem[];
 }
 
-interface PresenceMessage {
-  type: "presence";
+interface PeerListMessage {
+  type: "peers";
+  peers: PeerIdentity[];
+}
+
+interface PeerJoinedMessage {
+  type: "peer-joined";
+  peer: PeerIdentity;
+}
+
+interface PeerLeftMessage {
+  type: "peer-left";
   id: PeerId;
-  name: string;
-  color: string;
 }
 
 interface OfferMessage {
@@ -70,16 +84,44 @@ interface IceCandidateMessage {
 }
 
 type PeerMessage = CursorUpdate | DrawOperation | ClearBoard | SyncRequest | SyncResponse;
-type SignalMessage = PresenceMessage | OfferMessage | AnswerMessage | IceCandidateMessage;
+type SignalMessage =
+  | PeerListMessage
+  | PeerJoinedMessage
+  | PeerLeftMessage
+  | OfferMessage
+  | AnswerMessage
+  | IceCandidateMessage;
+type RelaySignalMessage = OfferMessage | AnswerMessage | IceCandidateMessage;
 
 const PEER_NAMES = [
-  "Avery", "Sam", "Jordan", "Taylor", "Morgan", "Casey", "Riley", "Quinn",
-  "Skyler", "Dakota", "Reese", "Rowan", "Sage", "Phoenix", "Eden"
+  "Avery",
+  "Sam",
+  "Jordan",
+  "Taylor",
+  "Morgan",
+  "Casey",
+  "Riley",
+  "Quinn",
+  "Skyler",
+  "Dakota",
+  "Reese",
+  "Rowan",
+  "Sage",
+  "Phoenix",
+  "Eden",
 ];
 
 const PEER_COLORS = [
-  "#805AD5", "#38B2AC", "#3182CE", "#E53E3E", "#D69E2E", 
-  "#38A169", "#DD6B20", "#6B46C1", "#EC4899", "#10B981"
+  "#805AD5",
+  "#38B2AC",
+  "#3182CE",
+  "#E53E3E",
+  "#D69E2E",
+  "#38A169",
+  "#DD6B20",
+  "#6B46C1",
+  "#EC4899",
+  "#10B981",
 ];
 
 function generatePeerId(): PeerId {
@@ -94,6 +136,18 @@ function getRandomColor(): string {
   return PEER_COLORS[Math.floor(Math.random() * PEER_COLORS.length)];
 }
 
+function getSignalingUrl(roomId: string, peerId: string, name: string, color: string) {
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const params = new URLSearchParams({
+    roomId,
+    peerId,
+    name,
+    color,
+  });
+
+  return `${protocol}//${window.location.host}/api/collab/ws?${params.toString()}`;
+}
+
 export interface RemotePeer {
   id: string;
   name: string;
@@ -105,10 +159,11 @@ export interface RemotePeer {
 }
 
 export function useCollaboration(
+  roomId: string,
   onRemoteDraw: (item: BoardItem) => void,
   onRemoteClear: () => void,
   onSyncRequest: (itemCount: number) => BoardItem[],
-  onSyncReceive: (items: BoardItem[]) => void
+  onSyncReceive: (items: BoardItem[]) => void,
 ) {
   const [myId] = useState<PeerId>(() => generatePeerId());
   const [myName] = useState(() => getRandomName());
@@ -116,151 +171,100 @@ export function useCollaboration(
   const [peers, setPeers] = useState<Map<PeerId, PeerInfo>>(new Map());
   const [remotePeers, setRemotePeers] = useState<RemotePeer[]>([]);
   const [isConnected, setIsConnected] = useState(false);
-  
-  const bcRef = useRef<BroadcastChannel | null>(null);
+
+  const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimerRef = useRef<number | null>(null);
   const peersRef = useRef<Map<PeerId, PeerInfo>>(peers);
-  const syncRequestedRef = useRef<Set<PeerId>>(new Set());
-  
+
   useEffect(() => {
     peersRef.current = peers;
   }, [peers]);
 
-  // Initialize BroadcastChannel for same-origin peer discovery
-  useEffect(() => {
-    if (typeof BroadcastChannel === "undefined") return;
-    
-    const bc = new BroadcastChannel("collab-board");
-    bcRef.current = bc;
-    
-    // Announce presence when joining
-    const announcePresence = () => {
-      const msg: PresenceMessage = {
-        type: "presence",
-        id: myId,
-        name: myName,
-        color: myColor
-      };
-      bc.postMessage(msg);
-    };
-    
-    // Announce immediately and periodically
-    announcePresence();
-    const interval = setInterval(announcePresence, 5000);
-    
-    bc.onmessage = async (event) => {
-      const msg = event.data as SignalMessage;
-      if (!msg || (msg.type === "presence" && msg.id === myId)) return;
-      
-      if (msg.type === "presence") {
-        console.log(`[Collab] Discovered peer: ${msg.name} (${msg.id})`);
-        // New peer discovered, initiate connection if we don't have one
-        if (!peersRef.current.has(msg.id) && msg.id < myId) {
-          console.log(`[Collab] Initiating connection to ${msg.name} (their ID < my ID)`);
-          // Only initiate if our ID is "greater" to avoid double connections
-          await initiateConnection(msg.id, msg.name, msg.color);
-        }
-      } else if (msg.type === "offer" && msg.to === myId) {
-        console.log(`[Collab] Received offer from ${msg.from} (for me)`);
-        await handleOffer(msg);
-      } else if (msg.type === "answer" && msg.to === myId) {
-        console.log(`[Collab] Received answer from ${msg.from} (for me)`);
-        await handleAnswer(msg);
-      } else if (msg.type === "ice" && msg.to === myId) {
-        await handleIceCandidate(msg);
-      }
-    };
-    
-    setIsConnected(true);
-    
-    return () => {
-      clearInterval(interval);
-      bc.close();
-      // Close all peer connections
-      peersRef.current.forEach(peer => {
-        peer.connection.close();
-      });
-    };
-  }, [myId, myName, myColor]);
+  function setTrackedPeers(next: Map<PeerId, PeerInfo>) {
+    peersRef.current = next;
+    setPeers(next);
+  }
 
-  const createPeerConnection = useCallback((peerId: PeerId, peerName: string, peerColor: string, isInitiator: boolean): PeerInfo => {
-    const pc = new RTCPeerConnection({
-      iceServers: [
-        { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:stun1.l.google.com:19302" }
-      ]
+  function addPeer(peer: PeerInfo) {
+    const next = new Map(peersRef.current);
+    next.set(peer.id, peer);
+    setTrackedPeers(next);
+  }
+
+  function markPeerConnected(peerId: PeerId) {
+    const peer = peersRef.current.get(peerId);
+    if (!peer) return;
+    peer.connected = true;
+    setTrackedPeers(new Map(peersRef.current));
+  }
+
+  function closeAllPeers() {
+    peersRef.current.forEach((peer) => {
+      peer.connection.close();
     });
-    
-    const peer: PeerInfo = {
-      id: peerId,
-      name: peerName,
-      color: peerColor,
-      connection: pc,
-      connected: false,
-      isInitiator
-    };
-    
-    // Create data channel if initiator
-    if (isInitiator) {
-      const dc = pc.createDataChannel("collab", { ordered: true });
-      setupDataChannel(peer, dc);
-    } else {
-      // Handle incoming data channel
-      pc.ondatachannel = (event) => {
-        setupDataChannel(peer, event.channel);
-      };
-    }
-    
-    // Handle ICE candidates
-    pc.onicecandidate = (event) => {
-      if (event.candidate && bcRef.current) {
-        const msg: IceCandidateMessage = {
-          type: "ice",
-          from: myId,
-          to: peerId,
-          candidate: event.candidate.toJSON()
-        };
-        bcRef.current.postMessage(msg);
-      }
-    };
-    
-    pc.onconnectionstatechange = () => {
-      if (pc.connectionState === "connected") {
-        setPeers(prev => {
-          const next = new Map(prev);
-          const p = next.get(peerId);
-          if (p) {
-            p.connected = true;
-          }
-          return next;
-        });
-      } else if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {
-        removePeer(peerId);
-      }
-    };
-    
-    return peer;
-  }, [myId]);
+    setTrackedPeers(new Map());
+    setRemotePeers([]);
+  }
 
-  const setupDataChannel = (peer: PeerInfo, dc: RTCDataChannel) => {
+  function removePeer(peerId: PeerId) {
+    const next = new Map(peersRef.current);
+    const peer = next.get(peerId);
+
+    if (peer) {
+      peer.connection.close();
+      next.delete(peerId);
+      setTrackedPeers(next);
+    }
+
+    setRemotePeers((prev) => prev.filter((p) => p.id !== peerId));
+  }
+
+  function updateRemotePeer(
+    id: string,
+    name: string,
+    color: string,
+    x: number,
+    y: number,
+    active: boolean,
+  ) {
+    setRemotePeers((prev) => {
+      const existing = prev.find((p) => p.id === id);
+      const now = Date.now();
+
+      if (existing) {
+        return prev.map((p) => (p.id === id ? { ...p, x, y, active, lastSeen: now } : p));
+      }
+
+      return [...prev, { id, name, color, x, y, active, lastSeen: now }];
+    });
+  }
+
+  function sendSignal(message: RelaySignalMessage) {
+    const socket = wsRef.current;
+    if (socket?.readyState !== WebSocket.OPEN) return;
+    socket.send(JSON.stringify(message));
+  }
+
+  function setupDataChannel(peer: PeerInfo, dc: RTCDataChannel) {
     peer.dataChannel = dc;
-    
+
     dc.onopen = () => {
-      peer.connected = true;
-      console.log(`[Collab] Data channel opened with ${peer.name} (${peer.id}). I am initiator: ${peer.isInitiator}`);
+      markPeerConnected(peer.id);
+      console.log(
+        `[Collab] Data channel opened with ${peer.name} (${peer.id}). I am initiator: ${peer.isInitiator}`,
+      );
       updateRemotePeer(peer.id, peer.name, peer.color, 0, 0, false);
-      
-      // BOTH sides send sync-request when connection opens
-      // This ensures whoever has more items will send them
+
       const ourItems = onSyncRequest(0);
       console.log(`[Collab] Sending sync-request. I have ${ourItems.length} items.`);
       const msg: SyncRequest = { type: "sync-request", itemCount: ourItems.length };
       dc.send(JSON.stringify(msg));
     };
-    
+
     dc.onclose = () => {
       removePeer(peer.id);
     };
-    
+
     dc.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data) as PeerMessage;
@@ -269,11 +273,68 @@ export function useCollaboration(
         console.error("Failed to parse peer message:", e);
       }
     };
-  };
+  }
 
-  const handlePeerMessage = (peer: PeerInfo, msg: PeerMessage) => {
+  function createPeerConnection(
+    peerId: PeerId,
+    peerName: string,
+    peerColor: string,
+    isInitiator: boolean,
+  ): PeerInfo {
+    const pc = new RTCPeerConnection({
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
+      ],
+    });
+
+    const peer: PeerInfo = {
+      id: peerId,
+      name: peerName,
+      color: peerColor,
+      connection: pc,
+      connected: false,
+      isInitiator,
+    };
+
+    if (isInitiator) {
+      const dc = pc.createDataChannel("collab", { ordered: true });
+      setupDataChannel(peer, dc);
+    } else {
+      pc.ondatachannel = (event) => {
+        setupDataChannel(peer, event.channel);
+      };
+    }
+
+    pc.onicecandidate = (event) => {
+      if (!event.candidate) return;
+
+      sendSignal({
+        type: "ice",
+        from: myId,
+        to: peerId,
+        candidate: event.candidate.toJSON(),
+      });
+    };
+
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === "connected") {
+        markPeerConnected(peerId);
+      } else if (
+        pc.connectionState === "disconnected" ||
+        pc.connectionState === "failed" ||
+        pc.connectionState === "closed"
+      ) {
+        removePeer(peerId);
+      }
+    };
+
+    return peer;
+  }
+
+  function handlePeerMessage(peer: PeerInfo, msg: PeerMessage) {
     console.log(`[Collab] Received ${msg.type} from ${peer.name}`);
-    
+
     if (msg.type === "cursor") {
       updateRemotePeer(peer.id, peer.name, peer.color, msg.x, msg.y, msg.active);
     } else if (msg.type === "draw") {
@@ -281,12 +342,10 @@ export function useCollaboration(
     } else if (msg.type === "clear") {
       onRemoteClear();
     } else if (msg.type === "sync-request") {
-      // Peer is requesting sync - send our items if we have MORE than them
       console.log(`[Collab] Sync requested. Peer has ${msg.itemCount} items.`);
       const ourItems = onSyncRequest(msg.itemCount);
       console.log(`[Collab] I have ${ourItems.length} items.`);
-      
-      // Send our items if we have more than the peer
+
       if (ourItems.length > msg.itemCount) {
         const response: SyncResponse = { type: "sync-response", items: ourItems };
         console.log(`[Collab] Sending sync response with ${ourItems.length} items.`);
@@ -297,120 +356,171 @@ export function useCollaboration(
         console.log(`[Collab] Not sending (peer has ${msg.itemCount}, I have ${ourItems.length})`);
       }
     } else if (msg.type === "sync-response") {
-      // Received sync data - apply it
       console.log(`[Collab] Received sync response with ${msg.items.length} items.`);
       onSyncReceive(msg.items);
     }
-  };
+  }
 
-  const initiateConnection = async (peerId: PeerId, peerName: string, peerColor: string) => {
+  async function initiateConnection(peerId: PeerId, peerName: string, peerColor: string) {
     if (peersRef.current.has(peerId)) return;
-    
+
     const peer = createPeerConnection(peerId, peerName, peerColor, true);
-    setPeers(prev => new Map(prev).set(peerId, peer));
-    
+    addPeer(peer);
+
     try {
       const offer = await peer.connection.createOffer();
       await peer.connection.setLocalDescription(offer);
-      
-      if (bcRef.current) {
-        const msg: OfferMessage = {
-          type: "offer",
-          from: myId,
-          to: peerId,
-          offer: offer,
-          name: myName,
-          color: myColor
-        };
-        bcRef.current.postMessage(msg);
-      }
+
+      sendSignal({
+        type: "offer",
+        from: myId,
+        to: peerId,
+        offer,
+        name: myName,
+        color: myColor,
+      });
     } catch (e) {
       console.error("Failed to create offer:", e);
     }
-  };
+  }
 
-  const handleOffer = async (msg: OfferMessage) => {
+  async function handleOffer(msg: OfferMessage) {
     if (peersRef.current.has(msg.from)) return;
-    
+
     const peer = createPeerConnection(msg.from, msg.name, msg.color, false);
-    setPeers(prev => new Map(prev).set(msg.from, peer));
-    
+    addPeer(peer);
+
     try {
       await peer.connection.setRemoteDescription(new RTCSessionDescription(msg.offer));
       const answer = await peer.connection.createAnswer();
       await peer.connection.setLocalDescription(answer);
-      
-      if (bcRef.current) {
-        const answerMsg: AnswerMessage = {
-          type: "answer",
-          from: myId,
-          to: msg.from,
-          answer: answer
-        };
-        bcRef.current.postMessage(answerMsg);
-      }
+
+      sendSignal({
+        type: "answer",
+        from: myId,
+        to: msg.from,
+        answer,
+      });
     } catch (e) {
       console.error("Failed to handle offer:", e);
     }
-  };
+  }
 
-  const handleAnswer = async (msg: AnswerMessage) => {
+  async function handleAnswer(msg: AnswerMessage) {
     const peer = peersRef.current.get(msg.from);
     if (!peer) return;
-    
+
     try {
       await peer.connection.setRemoteDescription(new RTCSessionDescription(msg.answer));
     } catch (e) {
       console.error("Failed to handle answer:", e);
     }
-  };
+  }
 
-  const handleIceCandidate = async (msg: IceCandidateMessage) => {
+  async function handleIceCandidate(msg: IceCandidateMessage) {
     const peer = peersRef.current.get(msg.from);
     if (!peer) return;
-    
+
     try {
       await peer.connection.addIceCandidate(new RTCIceCandidate(msg.candidate));
     } catch (e) {
       console.error("Failed to add ICE candidate:", e);
     }
-  };
+  }
 
-  const removePeer = (peerId: PeerId) => {
-    setPeers(prev => {
-      const next = new Map(prev);
-      const peer = next.get(peerId);
-      if (peer) {
-        peer.connection.close();
-        next.delete(peerId);
-      }
-      return next;
-    });
-    
-    setRemotePeers(prev => prev.filter(p => p.id !== peerId));
-    syncRequestedRef.current.delete(peerId);
-  };
+  function maybeConnectToPeer(peer: PeerIdentity, shouldInitiate: boolean) {
+    if (peer.id === myId || peersRef.current.has(peer.id)) return;
 
-  const updateRemotePeer = (id: string, name: string, color: string, x: number, y: number, active: boolean) => {
-    setRemotePeers(prev => {
-      const existing = prev.find(p => p.id === id);
-      const now = Date.now();
-      
-      if (existing) {
-        return prev.map(p => 
-          p.id === id 
-            ? { ...p, x, y, active, lastSeen: now }
-            : p
-        );
-      } else {
-        return [...prev, { id, name, color, x, y, active, lastSeen: now }];
+    if (shouldInitiate) {
+      console.log(`[Collab] Initiating connection to ${peer.name}`);
+      void initiateConnection(peer.id, peer.name, peer.color);
+    }
+  }
+
+  async function handleSignalMessage(msg: SignalMessage) {
+    if (msg.type === "peers") {
+      msg.peers.forEach((peer) => maybeConnectToPeer(peer, true));
+    } else if (msg.type === "peer-joined") {
+      maybeConnectToPeer(msg.peer, false);
+    } else if (msg.type === "peer-left") {
+      removePeer(msg.id);
+    } else if (msg.type === "offer" && msg.to === myId) {
+      console.log(`[Collab] Received offer from ${msg.from} (for me)`);
+      await handleOffer(msg);
+    } else if (msg.type === "answer" && msg.to === myId) {
+      console.log(`[Collab] Received answer from ${msg.from} (for me)`);
+      await handleAnswer(msg);
+    } else if (msg.type === "ice" && msg.to === myId) {
+      await handleIceCandidate(msg);
+    }
+  }
+
+  useEffect(() => {
+    if (!roomId || typeof WebSocket === "undefined") return;
+
+    let disposed = false;
+
+    const connect = () => {
+      const socket = new WebSocket(getSignalingUrl(roomId, myId, myName, myColor));
+      wsRef.current = socket;
+      setIsConnected(false);
+
+      socket.onopen = () => {
+        if (disposed || wsRef.current !== socket) return;
+        setIsConnected(true);
+        console.log(`[Collab] Joined room ${roomId}`);
+      };
+
+      socket.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data) as SignalMessage;
+          void handleSignalMessage(msg);
+        } catch (e) {
+          console.error("Failed to parse signaling message:", e);
+        }
+      };
+
+      socket.onclose = () => {
+        if (wsRef.current === socket) {
+          wsRef.current = null;
+          setIsConnected(false);
+          closeAllPeers();
+        }
+
+        if (!disposed) {
+          reconnectTimerRef.current = window.setTimeout(connect, 1500);
+        }
+      };
+
+      socket.onerror = () => {
+        socket.close();
+      };
+    };
+
+    connect();
+
+    return () => {
+      disposed = true;
+
+      if (reconnectTimerRef.current !== null) {
+        window.clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
       }
-    });
-  };
+
+      const socket = wsRef.current;
+      wsRef.current = null;
+
+      if (socket && socket.readyState !== WebSocket.CLOSED) {
+        socket.close();
+      }
+
+      closeAllPeers();
+    };
+  }, [roomId, myId, myName, myColor]);
 
   const broadcastCursor = useCallback((x: number, y: number, active: boolean) => {
     const msg: CursorUpdate = { type: "cursor", x, y, active };
-    peersRef.current.forEach(peer => {
+    peersRef.current.forEach((peer) => {
       if (peer.connected && peer.dataChannel?.readyState === "open") {
         peer.dataChannel.send(JSON.stringify(msg));
       }
@@ -419,7 +529,7 @@ export function useCollaboration(
 
   const broadcastDraw = useCallback((item: BoardItem) => {
     const msg: DrawOperation = { type: "draw", item };
-    peersRef.current.forEach(peer => {
+    peersRef.current.forEach((peer) => {
       if (peer.connected && peer.dataChannel?.readyState === "open") {
         peer.dataChannel.send(JSON.stringify(msg));
       }
@@ -428,7 +538,7 @@ export function useCollaboration(
 
   const broadcastClear = useCallback(() => {
     const msg: ClearBoard = { type: "clear" };
-    peersRef.current.forEach(peer => {
+    peersRef.current.forEach((peer) => {
       if (peer.connected && peer.dataChannel?.readyState === "open") {
         peer.dataChannel.send(JSON.stringify(msg));
       }
@@ -444,6 +554,6 @@ export function useCollaboration(
     peerCount: peers.size,
     broadcastCursor,
     broadcastDraw,
-    broadcastClear
+    broadcastClear,
   };
 }
