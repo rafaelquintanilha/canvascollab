@@ -7,6 +7,7 @@ import {
   Download,
   Eraser,
   Hand,
+  HelpCircle,
   ImagePlus,
   Minus,
   MousePointer2,
@@ -24,6 +25,7 @@ import {
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Slider } from "@/components/ui/slider";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -128,6 +130,41 @@ function uid() {
   return Math.random().toString(16).slice(2) + Date.now().toString(16);
 }
 
+const TEXT_LINE_GAP = 6;
+const TEXT_FONT_STACK = "Inter, ui-sans-serif, system-ui";
+const TEXT_MIN_FONT = 8;
+const TEXT_MAX_FONT = 200;
+
+function textLineHeight(fontSize: number) {
+  return fontSize + TEXT_LINE_GAP;
+}
+
+let _textMeasureCtx: CanvasRenderingContext2D | null = null;
+function getMeasureCtx() {
+  if (_textMeasureCtx) return _textMeasureCtx;
+  const c = document.createElement("canvas");
+  _textMeasureCtx = c.getContext("2d");
+  return _textMeasureCtx;
+}
+
+function measureTextItem(text: string, fontSize: number): { w: number; h: number } {
+  const ctx = getMeasureCtx();
+  const lines = text.length === 0 ? [""] : text.split("\n");
+  let maxW = 0;
+  if (ctx) {
+    ctx.font = `500 ${fontSize}px ${TEXT_FONT_STACK}`;
+    for (const ln of lines) {
+      const w = ctx.measureText(ln || " ").width;
+      if (w > maxW) maxW = w;
+    }
+  } else {
+    maxW = fontSize * 0.6 * Math.max(1, ...lines.map((l) => l.length));
+  }
+  const lineH = textLineHeight(fontSize);
+  const h = lines.length * lineH - TEXT_LINE_GAP;
+  return { w: Math.max(maxW, fontSize * 0.5), h };
+}
+
 function toCanvasPoint(
   clientX: number,
   clientY: number,
@@ -148,7 +185,17 @@ function hslToCss(hsl: string) {
 
 type Handle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
 
-type Bounds = { id: string; type: "image" | "shape"; x: number; y: number; w: number; h: number };
+type Bounds = {
+  id: string;
+  type: "image" | "shape" | "text";
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  fontSize?: number;
+};
+
+const TEXT_CORNER_HANDLES: Handle[] = ["nw", "ne", "se", "sw"];
 
 function itemBounds(item: BoardItem): Bounds | null {
   if (item.type === "image") {
@@ -165,6 +212,11 @@ function itemBounds(item: BoardItem): Bounds | null {
       w: Math.abs(s.w),
       h: Math.abs(s.h),
     };
+  }
+  if (item.type === "text") {
+    const t = item.data;
+    const { w, h } = measureTextItem(t.text, t.fontSize);
+    return { id: t.id, type: "text", x: t.x, y: t.y, w, h, fontSize: t.fontSize };
   }
   return null;
 }
@@ -185,14 +237,25 @@ function getHandleRects(b: { x: number; y: number; w: number; h: number }, hs: n
   } as Record<Handle, { x: number; y: number; w: number; h: number }>;
 }
 
-function hitHandle(p: Point, b: { x: number; y: number; w: number; h: number }, zoom: number): Handle | null {
+function hitHandle(
+  p: Point,
+  b: { x: number; y: number; w: number; h: number },
+  zoom: number,
+  allowed?: Handle[],
+): Handle | null {
   const hs = 12 / zoom;
   const rects = getHandleRects(b, hs);
-  for (const k of Object.keys(rects) as Handle[]) {
+  const keys = (allowed ?? (Object.keys(rects) as Handle[])) as Handle[];
+  for (const k of keys) {
     const r = rects[k];
     if (p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h) return k;
   }
   return null;
+}
+
+function handlesForType(t: Bounds["type"]): Handle[] {
+  if (t === "text") return TEXT_CORNER_HANDLES;
+  return ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
 }
 
 function hitBounds(p: Point, b: { x: number; y: number; w: number; h: number }) {
@@ -424,7 +487,25 @@ export default function WhiteboardPage() {
   const [fillOpacity, setFillOpacity] = useState(0.1);
   const [customColor, setCustomColor] = useState<string>("#3182CE");
   const [strokeSize, setStrokeSize] = useState<number>(3);
+  const [fontSize, setFontSize] = useState<number>(18);
   const [zoom, setZoom] = useState<number>(1);
+
+  type EditingText = {
+    id: string;
+    x: number;
+    y: number;
+    content: string;
+    fontSize: number;
+    color: string;
+    isNew: boolean;
+  };
+  const [editingText, setEditingText] = useState<EditingText | null>(null);
+  const editorRef = useRef<HTMLDivElement | null>(null);
+  const editorContentRef = useRef<string>("");
+  const editingTextRef = useRef<EditingText | null>(null);
+  useEffect(() => {
+    editingTextRef.current = editingText;
+  }, [editingText]);
   const [viewport, setViewport] = useState<{ x: number; y: number; zoom: number }>({
     x: 0,
     y: 0,
@@ -468,7 +549,10 @@ export default function WhiteboardPage() {
   );
 
   const updateItemBounds = useCallback(
-    (id: string, b: { x: number; y: number; w: number; h: number }) => {
+    (
+      id: string,
+      b: { x: number; y: number; w: number; h: number; fontSize?: number },
+    ) => {
       setItems((prev) =>
         prev.map((it) => {
           if (it.type === "image" && it.data.id === id) {
@@ -476,6 +560,17 @@ export default function WhiteboardPage() {
           }
           if (it.type === "shape" && it.data.id === id) {
             return { type: "shape", data: { ...it.data, x: b.x, y: b.y, w: b.w, h: b.h } };
+          }
+          if (it.type === "text" && it.data.id === id) {
+            return {
+              type: "text",
+              data: {
+                ...it.data,
+                x: b.x,
+                y: b.y,
+                fontSize: b.fontSize ?? it.data.fontSize,
+              },
+            };
           }
           return it;
         }),
@@ -490,7 +585,8 @@ export default function WhiteboardPage() {
       const f = items.find(
         (it) =>
           (it.type === "image" && it.data.id === id) ||
-          (it.type === "shape" && it.data.id === id),
+          (it.type === "shape" && it.data.id === id) ||
+          (it.type === "text" && it.data.id === id),
       );
       return f ? itemBounds(f) : null;
     },
@@ -501,16 +597,21 @@ export default function WhiteboardPage() {
     (stroke: string, nextFill: string) => {
       if (!selectedId) return;
       const target = itemsRef.current.find(
-        (it) => it.type === "shape" && it.data.id === selectedId,
+        (it) =>
+          (it.type === "shape" || it.type === "text") && it.data.id === selectedId,
       );
       if (!target) return;
       commitHistory();
       setItems((prev) =>
-        prev.map((it) =>
-          it.type === "shape" && it.data.id === selectedId
-            ? { type: "shape", data: { ...it.data, stroke, fill: nextFill } }
-            : it,
-        ),
+        prev.map((it) => {
+          if (it.type === "shape" && it.data.id === selectedId) {
+            return { type: "shape", data: { ...it.data, stroke, fill: nextFill } };
+          }
+          if (it.type === "text" && it.data.id === selectedId) {
+            return { type: "text", data: { ...it.data, color: stroke } };
+          }
+          return it;
+        }),
       );
     },
     [selectedId, commitHistory],
@@ -540,19 +641,56 @@ export default function WhiteboardPage() {
     [selectedId, color, commitHistory],
   );
 
+  const applyFontSize = useCallback(
+    (next: number) => {
+      const sz = clamp(Math.round(next), TEXT_MIN_FONT, TEXT_MAX_FONT);
+      setFontSize(sz);
+      if (editingTextRef.current) {
+        setEditingText((curr) => (curr ? { ...curr, fontSize: sz } : curr));
+        return;
+      }
+      if (!selectedId) return;
+      const text = itemsRef.current.find(
+        (it): it is { type: "text"; data: TextItem } =>
+          it.type === "text" && it.data.id === selectedId,
+      );
+      if (!text) return;
+      commitHistory();
+      setItems((prev) =>
+        prev.map((it) =>
+          it.type === "text" && it.data.id === selectedId
+            ? { type: "text", data: { ...it.data, fontSize: sz } }
+            : it,
+        ),
+      );
+    },
+    [selectedId, commitHistory],
+  );
+
   useEffect(() => {
     if (!selectedId) return;
     const shape = itemsRef.current.find(
       (it): it is { type: "shape"; data: Shape } =>
         it.type === "shape" && it.data.id === selectedId,
     );
-    if (!shape) return;
-    const { stroke, fill } = shape.data;
-    setColor(stroke);
-    setCustomColor(stroke);
-    const opacity = getFillOpacity(fill);
-    setFillOpacity(opacity);
-    setFill(fill);
+    if (shape) {
+      const { stroke, fill } = shape.data;
+      setColor(stroke);
+      setCustomColor(stroke);
+      const opacity = getFillOpacity(fill);
+      setFillOpacity(opacity);
+      setFill(fill);
+      return;
+    }
+    const text = itemsRef.current.find(
+      (it): it is { type: "text"; data: TextItem } =>
+        it.type === "text" && it.data.id === selectedId,
+    );
+    if (text) {
+      setColor(text.data.color);
+      setCustomColor(text.data.color);
+      setFontSize(Math.round(text.data.fontSize));
+    }
   }, [selectedId]);
 
   const reorderSelected = useCallback(
@@ -561,7 +699,8 @@ export default function WhiteboardPage() {
       const prev = itemsRef.current;
       const idx = prev.findIndex(
         (it) =>
-          (it.type === "image" || it.type === "shape") && it.data.id === selectedId,
+          (it.type === "image" || it.type === "shape" || it.type === "text") &&
+          it.data.id === selectedId,
       );
       if (idx === -1) return;
       let target = idx;
@@ -696,7 +835,10 @@ export default function WhiteboardPage() {
       contentCtx.translate(viewport.x, viewport.y);
       contentCtx.scale(viewport.zoom, viewport.zoom);
 
-      const all: BoardItem[] = [...items];
+      const editingId = editingText?.id ?? null;
+      const all: BoardItem[] = items.filter(
+        (it) => !(editingId && it.type === "text" && it.data.id === editingId),
+      );
       if (activeShape) all.push({ type: "shape", data: activeShape });
       // Include active stroke on content layer so eraser preview shows correctly
       if (activeStroke) all.push({ type: "stroke", data: activeStroke });
@@ -757,11 +899,11 @@ export default function WhiteboardPage() {
           const t = item.data;
           contentCtx.globalCompositeOperation = "source-over";
           contentCtx.fillStyle = t.color;
-          contentCtx.font = `${t.fontSize}px Inter, ui-sans-serif, system-ui`;
+          contentCtx.font = `500 ${t.fontSize}px ${TEXT_FONT_STACK}`;
           contentCtx.textBaseline = "top";
           const lines = t.text.split("\n");
           for (let i = 0; i < lines.length; i++) {
-            contentCtx.fillText(lines[i], t.x, t.y + i * (t.fontSize + 6));
+            contentCtx.fillText(lines[i], t.x, t.y + i * textLineHeight(t.fontSize));
           }
         }
 
@@ -785,7 +927,8 @@ export default function WhiteboardPage() {
         const selEntry = items.find(
           (it) =>
             (it.type === "image" && it.data.id === selectedId) ||
-            (it.type === "shape" && it.data.id === selectedId),
+            (it.type === "shape" && it.data.id === selectedId) ||
+            (it.type === "text" && it.data.id === selectedId),
         );
         const sel = selEntry ? itemBounds(selEntry) : null;
         if (sel) {
@@ -800,8 +943,9 @@ export default function WhiteboardPage() {
 
           const hs = 10 / z;
           const handles = getHandleRects(sel, hs);
+          const handleKeys = handlesForType(sel.type);
           contentCtx.lineWidth = 1 / z;
-          for (const k of Object.keys(handles) as Handle[]) {
+          for (const k of handleKeys) {
             const r = handles[k];
             contentCtx.fillStyle = "#ffffff";
             contentCtx.fillRect(r.x, r.y, r.w, r.h);
@@ -809,15 +953,18 @@ export default function WhiteboardPage() {
             contentCtx.strokeRect(r.x, r.y, r.w, r.h);
           }
 
-          const label = `${Math.round(sel.w)} × ${Math.round(sel.h)}`;
-          const fontSize = 11 / z;
-          contentCtx.font = `${fontSize}px Inter, ui-sans-serif, system-ui`;
+          const label =
+            sel.type === "text" && sel.fontSize !== undefined
+              ? `${Math.round(sel.fontSize)}px`
+              : `${Math.round(sel.w)} × ${Math.round(sel.h)}`;
+          const pillFontSize = 11 / z;
+          contentCtx.font = `500 ${pillFontSize}px ${TEXT_FONT_STACK}`;
           contentCtx.textBaseline = "top";
           const padX = 6 / z;
           const padY = 3 / z;
           const textW = contentCtx.measureText(label).width;
           const boxW = textW + padX * 2;
-          const boxH = fontSize + padY * 2;
+          const boxH = pillFontSize + padY * 2;
           const labelX = sel.x + sel.w / 2 - boxW / 2;
           const labelY = sel.y + sel.h + 8 / z;
           contentCtx.fillStyle = "#3175F1";
@@ -861,7 +1008,7 @@ export default function WhiteboardPage() {
 
       ctx.restore();
     };
-  }, [activeShape, activeStroke, items, viewport.x, viewport.y, viewport.zoom, selectedId, tool]);
+  }, [activeShape, activeStroke, items, viewport.x, viewport.y, viewport.zoom, selectedId, tool, editingText]);
 
   useEffect(() => {
     const loop = () => {
@@ -886,6 +1033,88 @@ export default function WhiteboardPage() {
     broadcastDraw(item);
   };
 
+  const commitText = useCallback(() => {
+    const e = editingTextRef.current;
+    if (!e) return;
+    editingTextRef.current = null;
+    const raw = editorContentRef.current ?? e.content;
+    const text = raw.replace(/\s+$/g, "");
+    setEditingText(null);
+    if (e.isNew) {
+      if (text.length === 0) return;
+      const item: BoardItem = {
+        type: "text",
+        data: {
+          id: e.id,
+          x: e.x,
+          y: e.y,
+          text,
+          color: e.color,
+          fontSize: e.fontSize,
+        },
+      };
+      commitHistory();
+      setItems((prev) => [...prev, item]);
+      broadcastDraw(item);
+      return;
+    }
+    commitHistory();
+    if (text.length === 0) {
+      setItems((prev) =>
+        prev.filter((it) => !(it.type === "text" && it.data.id === e.id)),
+      );
+      setSelectedId((curr) => (curr === e.id ? null : curr));
+      return;
+    }
+    setItems((prev) =>
+      prev.map((it) =>
+        it.type === "text" && it.data.id === e.id
+          ? { type: "text", data: { ...it.data, text, color: e.color, fontSize: e.fontSize } }
+          : it,
+      ),
+    );
+  }, [broadcastDraw, commitHistory]);
+
+  useEffect(() => {
+    if (!editingText) return;
+    const el = editorRef.current;
+    if (!el) return;
+    editorContentRef.current = editingText.content;
+    if (el.innerText !== editingText.content) {
+      el.innerText = editingText.content;
+    }
+    el.dataset.empty = editingText.content.length === 0 ? "true" : "false";
+    el.focus();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(false);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+  }, [editingText?.id]);
+
+  useEffect(() => {
+    if (!editingText) return;
+    const onDocDown = (ev: PointerEvent) => {
+      const editorEl = editorRef.current;
+      if (editorEl && editorEl.contains(ev.target as Node)) return;
+      commitText();
+    };
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        ev.stopPropagation();
+        commitText();
+      }
+    };
+    document.addEventListener("pointerdown", onDocDown, true);
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("pointerdown", onDocDown, true);
+      document.removeEventListener("keydown", onKey, true);
+    };
+  }, [editingText, commitText]);
+
   const onPointerDown = (e: React.PointerEvent) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -906,7 +1135,7 @@ export default function WhiteboardPage() {
     if (tool === "select") {
       const selected = findBounds(selectedId);
       if (selected) {
-        const h = hitHandle(p, selected, viewport.zoom);
+        const h = hitHandle(p, selected, viewport.zoom, handlesForType(selected.type));
         if (h) {
           dragPreSnapshotRef.current = itemsRef.current;
           setDragMode({ kind: "resize", handle: h, startMouse: p, startBounds: selected });
@@ -957,20 +1186,17 @@ export default function WhiteboardPage() {
     }
 
     if (tool === "text") {
-      const text = window.prompt("Add text", "");
-      if (text && text.trim()) {
-        pushItem({
-          type: "text",
-          data: {
-            id: uid(),
-            x: p.x,
-            y: p.y,
-            text: text.trim(),
-            color,
-            fontSize: 18,
-          },
-        });
-      }
+      if (editingTextRef.current) return;
+      setSelectedId(null);
+      setEditingText({
+        id: uid(),
+        x: p.x,
+        y: p.y,
+        content: "",
+        fontSize,
+        color,
+        isNew: true,
+      });
       return;
     }
   };
@@ -988,7 +1214,9 @@ export default function WhiteboardPage() {
     if (!isPointerDown) {
       if (tool === "select") {
         const selected = findBounds(selectedId);
-        const hh = selected ? hitHandle(p, selected, viewport.zoom) : null;
+        const hh = selected
+          ? hitHandle(p, selected, viewport.zoom, handlesForType(selected.type))
+          : null;
         setHoverHandle(hh);
         if (hh) {
           setHoverItemId(null);
@@ -1069,6 +1297,38 @@ export default function WhiteboardPage() {
           else nw = nh * aspect;
           if (dragMode.handle.includes("n")) ny = start.y + start.h - nh;
           if (dragMode.handle.includes("w")) nx = start.x + start.w - nw;
+        }
+        if (start.type === "text" && start.fontSize !== undefined) {
+          const anchorX = dragMode.handle.includes("w") ? start.x + start.w : start.x;
+          const anchorY = dragMode.handle.includes("n") ? start.y + start.h : start.y;
+          const startDist = Math.hypot(
+            dragMode.startMouse.x - anchorX,
+            dragMode.startMouse.y - anchorY,
+          );
+          const nowDist = Math.hypot(p.x - anchorX, p.y - anchorY);
+          if (startDist > 0.5) {
+            const rawScale = nowDist / startDist;
+            const target = start.fontSize * rawScale;
+            const nextFont = Math.round(clamp(target, TEXT_MIN_FONT, TEXT_MAX_FONT));
+            const item = itemsRef.current.find(
+              (it): it is { type: "text"; data: TextItem } =>
+                it.type === "text" && it.data.id === start.id,
+            );
+            if (item) {
+              const { w: mw, h: mh } = measureTextItem(item.data.text, nextFont);
+              const newX = dragMode.handle.includes("w") ? anchorX - mw : anchorX;
+              const newY = dragMode.handle.includes("n") ? anchorY - mh : anchorY;
+              updateItemBounds(start.id, {
+                x: newX,
+                y: newY,
+                w: mw,
+                h: mh,
+                fontSize: nextFont,
+              });
+              setFontSize(nextFont);
+            }
+          }
+          return;
         }
         updateItemBounds(start.id, { x: nx, y: ny, w: nw, h: nh });
       }
@@ -1173,7 +1433,8 @@ export default function WhiteboardPage() {
         prevSnap.some(
           (it) =>
             (it.type === "image" && it.data.id === id) ||
-            (it.type === "shape" && it.data.id === id),
+            (it.type === "shape" && it.data.id === id) ||
+            (it.type === "text" && it.data.id === id),
         )
           ? id
           : null,
@@ -1193,7 +1454,8 @@ export default function WhiteboardPage() {
         nextSnap.some(
           (it) =>
             (it.type === "image" && it.data.id === id) ||
-            (it.type === "shape" && it.data.id === id),
+            (it.type === "shape" && it.data.id === id) ||
+            (it.type === "text" && it.data.id === id),
         )
           ? id
           : null,
@@ -1250,6 +1512,7 @@ export default function WhiteboardPage() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (editingTextRef.current) return;
       const isMac = navigator.platform.toUpperCase().indexOf("MAC") >= 0;
       const modifier = isMac ? e.metaKey : e.ctrlKey;
 
@@ -1265,7 +1528,8 @@ export default function WhiteboardPage() {
             (it) =>
               !(
                 (it.type === "image" && it.data.id === selectedId) ||
-                (it.type === "shape" && it.data.id === selectedId)
+                (it.type === "shape" && it.data.id === selectedId) ||
+                (it.type === "text" && it.data.id === selectedId)
               ),
           ),
         );
@@ -1575,10 +1839,16 @@ export default function WhiteboardPage() {
             transition={{ delay: 0.03 }}
             className="pointer-events-auto rounded-2xl border border-slate-200/70 bg-white/85 p-2 shadow-md backdrop-blur cb-noise"
           >
-            <div className="rounded-xl border border-slate-200/70 bg-white/70 p-2">
+            <div className="w-[224px] rounded-xl border border-slate-200/70 bg-white/70 p-2">
               <div className="flex items-center justify-between">
                 <div className="text-xs font-medium text-slate-700">Color</div>
-                <div className="text-[11px] text-slate-500">Stroke</div>
+                <div className="text-[11px] text-slate-500">
+                  {tool === "text" ||
+                  editingText !== null ||
+                  items.some((it) => it.type === "text" && it.data.id === selectedId)
+                    ? "Text"
+                    : "Stroke"}
+                </div>
               </div>
               
               <ColorPicker
@@ -1633,24 +1903,58 @@ export default function WhiteboardPage() {
                 </div>
               )}
 
-              <div className="mt-3">
-                <div className="flex items-center justify-between">
-                  <div className="text-xs font-medium text-slate-700">Size</div>
-                  <div data-testid="text-size" className="text-[11px] text-slate-500">
-                    {strokeSize}px
+              {(() => {
+                const isTextContext =
+                  tool === "text" ||
+                  editingText !== null ||
+                  items.some((it) => it.type === "text" && it.data.id === selectedId);
+                if (isTextContext) {
+                  const displayFont = clamp(Math.round(fontSize), TEXT_MIN_FONT, TEXT_MAX_FONT);
+                  return (
+                    <div className="mt-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-xs font-medium text-slate-700">Text size</div>
+                        <div
+                          data-testid="text-font-size"
+                          className="text-[11px] tabular-nums text-slate-500"
+                        >
+                          {displayFont}px
+                        </div>
+                      </div>
+                      <div className="mt-2 px-1">
+                        <Slider
+                          data-testid="slider-font-size"
+                          value={[displayFont]}
+                          min={TEXT_MIN_FONT}
+                          max={TEXT_MAX_FONT}
+                          step={1}
+                          onValueChange={(v) => applyFontSize(v[0] ?? 18)}
+                        />
+                      </div>
+                    </div>
+                  );
+                }
+                return (
+                  <div className="mt-3">
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs font-medium text-slate-700">Size</div>
+                      <div data-testid="text-size" className="text-[11px] text-slate-500">
+                        {strokeSize}px
+                      </div>
+                    </div>
+                    <div className="mt-2 px-1">
+                      <Slider
+                        data-testid="slider-size"
+                        value={[strokeSize]}
+                        min={1}
+                        max={14}
+                        step={1}
+                        onValueChange={(v) => setStrokeSize(v[0] ?? 3)}
+                      />
+                    </div>
                   </div>
-                </div>
-                <div className="mt-2 px-1">
-                  <Slider
-                    data-testid="slider-size"
-                    value={[strokeSize]}
-                    min={1}
-                    max={14}
-                    step={1}
-                    onValueChange={(v) => setStrokeSize(v[0] ?? 3)}
-                  />
-                </div>
-              </div>
+                );
+              })()}
             </div>
           </motion.div>
         </div>
@@ -1750,7 +2054,8 @@ export default function WhiteboardPage() {
                   (it) =>
                     !(
                       (it.type === "image" && it.data.id === id) ||
-                      (it.type === "shape" && it.data.id === id)
+                      (it.type === "shape" && it.data.id === id) ||
+                      (it.type === "text" && it.data.id === id)
                     ),
                 ),
               );
@@ -1841,12 +2146,39 @@ export default function WhiteboardPage() {
                         : hoverItemId
                           ? "cursor-move"
                           : "cursor-default"
-                  : "cursor-crosshair",
+                  : tool === "text"
+                    ? "cursor-text"
+                    : "cursor-crosshair",
             )}
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
             onPointerCancel={onPointerUp}
+            onDoubleClick={(e) => {
+              const canvas = canvasRef.current;
+              if (!canvas) return;
+              const rect = canvas.getBoundingClientRect();
+              const p = toCanvasPoint(e.clientX, e.clientY, viewport, rect);
+              for (let i = items.length - 1; i >= 0; i--) {
+                const it = items[i];
+                if (it.type !== "text") continue;
+                const b = itemBounds(it);
+                if (b && hitBounds(p, b)) {
+                  e.preventDefault();
+                  setSelectedId(null);
+                  setEditingText({
+                    id: it.data.id,
+                    x: it.data.x,
+                    y: it.data.y,
+                    content: it.data.text,
+                    fontSize: it.data.fontSize,
+                    color: it.data.color,
+                    isNew: false,
+                  });
+                  return;
+                }
+              }
+            }}
             onWheel={onWheel}
             onContextMenu={(e) => {
               const canvas = canvasRef.current;
@@ -1865,6 +2197,71 @@ export default function WhiteboardPage() {
               setContextMenu(null);
             }}
           />
+
+          {editingText && (
+            <div
+              ref={editorRef}
+              contentEditable
+              suppressContentEditableWarning
+              data-testid="text-editor"
+              spellCheck={false}
+              onInput={(ev) => {
+                const el = ev.currentTarget as HTMLDivElement;
+                editorContentRef.current = el.innerText;
+                el.dataset.empty = el.innerText.length === 0 ? "true" : "false";
+              }}
+              onKeyDown={(ev) => {
+                ev.stopPropagation();
+                if (ev.key === "Escape") {
+                  ev.preventDefault();
+                  commitText();
+                }
+              }}
+              onPointerDown={(ev) => ev.stopPropagation()}
+              onPaste={(ev) => {
+                ev.preventDefault();
+                const text = ev.clipboardData.getData("text/plain");
+                const sel = window.getSelection();
+                if (sel && sel.rangeCount > 0) {
+                  const range = sel.getRangeAt(0);
+                  range.deleteContents();
+                  range.insertNode(document.createTextNode(text));
+                  range.collapse(false);
+                  sel.removeAllRanges();
+                  sel.addRange(range);
+                  const el = editorRef.current;
+                  if (el) {
+                    editorContentRef.current = el.innerText;
+                    el.dataset.empty = el.innerText.length === 0 ? "true" : "false";
+                  }
+                }
+              }}
+              style={{
+                position: "absolute",
+                left: viewport.x + editingText.x * viewport.zoom,
+                top: viewport.y + editingText.y * viewport.zoom,
+                fontFamily: TEXT_FONT_STACK,
+                fontSize: `${editingText.fontSize * viewport.zoom}px`,
+                fontWeight: 500,
+                lineHeight: `${textLineHeight(editingText.fontSize) * viewport.zoom}px`,
+                color: editingText.color,
+                caretColor: "#3175F1",
+                whiteSpace: "pre-wrap",
+                wordBreak: "normal",
+                padding: 0,
+                margin: 0,
+                minWidth: `${Math.max(4, editingText.fontSize * viewport.zoom * 0.3)}px`,
+                minHeight: `${editingText.fontSize * viewport.zoom}px`,
+                pointerEvents: "auto",
+                zIndex: 35,
+                cursor: "text",
+                userSelect: "text",
+                background: "transparent",
+                outline: "none",
+              }}
+              className="cb-text-editor"
+            />
+          )}
 
           {/* Presence layer */}
           <div className="pointer-events-none absolute inset-0">
@@ -1903,20 +2300,40 @@ export default function WhiteboardPage() {
 
           {/* Help */}
           <div className="pointer-events-none absolute bottom-4 left-4 z-20">
-            <div className="pointer-events-auto max-w-[340px] rounded-2xl border border-slate-200/70 bg-white/80 p-3 text-xs text-slate-600 shadow-sm backdrop-blur cb-noise">
-              <div className="font-semibold text-slate-800">Tips</div>
-              <ul className="mt-1 space-y-1">
-                <li>
-                  <span className="font-medium text-slate-700">Draw:</span> Pen / Shapes / Eraser
-                </li>
-                <li>
-                  <span className="font-medium text-slate-700">Pan:</span> Pan tool
-                </li>
-                <li>
-                  <span className="font-medium text-slate-700">Zoom:</span> Ctrl/Cmd + mouse wheel
-                </li>
-              </ul>
-            </div>
+            <Popover>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  data-testid="button-help"
+                  aria-label="Tips"
+                  className="pointer-events-auto grid size-10 place-items-center rounded-xl border border-slate-200/70 bg-white/80 text-slate-700 shadow-sm backdrop-blur transition-all hover:-translate-y-0.5 hover:shadow-md"
+                >
+                  <HelpCircle className="size-[18px]" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent
+                side="right"
+                align="end"
+                sideOffset={8}
+                className="w-64 rounded-2xl border border-slate-200/70 bg-white/90 p-3 text-xs text-slate-600 shadow-md backdrop-blur cb-noise"
+              >
+                <div className="font-semibold text-slate-800">Tips</div>
+                <ul className="mt-1 space-y-1">
+                  <li>
+                    <span className="font-medium text-slate-700">Draw:</span> Pen, Shapes, Eraser
+                  </li>
+                  <li>
+                    <span className="font-medium text-slate-700">Text:</span> click to place, Esc to commit, double-click to edit
+                  </li>
+                  <li>
+                    <span className="font-medium text-slate-700">Pan:</span> Pan tool
+                  </li>
+                  <li>
+                    <span className="font-medium text-slate-700">Zoom:</span> Ctrl/Cmd + mouse wheel
+                  </li>
+                </ul>
+              </PopoverContent>
+            </Popover>
           </div>
         </div>
       </div>

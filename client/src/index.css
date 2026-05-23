@@ -272,4 +272,9 @@
       radial-gradient(circle at 1px 1px, rgba(45, 55, 72, 0.10) 1px, transparent 0);
     background-size: 22px 22px;
   }
+
+  .cb-text-editor[data-empty="false"] {
+    outline: 1px dashed #3175F1;
+    outline-offset: 2px;
+  }
 }
