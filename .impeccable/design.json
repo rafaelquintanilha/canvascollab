@@ -1,0 +1,309 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-05-23T00:00:00Z",
+  "title": "Design System: CollabBoard",
+  "extensions": {
+    "colorMeta": {
+      "notebook-ink": {
+        "role": "primary",
+        "displayName": "Notebook Ink",
+        "canonical": "oklch(20% 0.025 264)",
+        "tonalRamp": [
+          "#020617",
+          "#0F172A",
+          "#1E293B",
+          "#334155",
+          "#475569",
+          "#64748B",
+          "#94A3B8",
+          "#CBD5E1"
+        ]
+      },
+      "selection-blue": {
+        "role": "secondary",
+        "displayName": "Selection Blue",
+        "canonical": "oklch(60% 0.20 258)",
+        "tonalRamp": [
+          "#172554",
+          "#1E3A8A",
+          "#1E40AF",
+          "#1D4ED8",
+          "#2563EB",
+          "#3175F1",
+          "#60A5FA",
+          "#BFDBFE"
+        ]
+      },
+      "annotation-purple": {
+        "role": "tertiary",
+        "displayName": "Annotation Purple",
+        "canonical": "oklch(60% 0.18 295)",
+        "tonalRamp": [
+          "#2E1065",
+          "#4C1D95",
+          "#5B21B6",
+          "#6D28D9",
+          "#7C3AED",
+          "#805AD5",
+          "#A78BFA",
+          "#DDD6FE"
+        ]
+      },
+      "paper-cream": {
+        "role": "neutral",
+        "displayName": "Paper Cream",
+        "canonical": "oklch(98% 0.005 240)",
+        "tonalRamp": [
+          "#E2E8F0",
+          "#EDF2F7",
+          "#F1F5F9",
+          "#F7FAFC",
+          "#F8FAFC",
+          "#FAFBFC",
+          "#FCFCFD",
+          "#FFFFFF"
+        ]
+      },
+      "panel-white": {
+        "role": "neutral",
+        "displayName": "Panel White",
+        "canonical": "oklch(100% 0 0)",
+        "tonalRamp": [
+          "#FFFFFF",
+          "#FFFFFFE6",
+          "#FFFFFFD9",
+          "#FFFFFFCC",
+          "#FFFFFFBF",
+          "#FFFFFFB3",
+          "#FFFFFFA6",
+          "#FFFFFF99"
+        ]
+      },
+      "body-slate": {
+        "role": "neutral",
+        "displayName": "Body Slate",
+        "canonical": "oklch(38% 0.025 264)",
+        "tonalRamp": [
+          "#0F172A",
+          "#1E293B",
+          "#334155",
+          "#475569",
+          "#64748B",
+          "#94A3B8",
+          "#CBD5E1",
+          "#E2E8F0"
+        ]
+      },
+      "muted-slate": {
+        "role": "neutral",
+        "displayName": "Muted Slate",
+        "canonical": "oklch(55% 0.02 264)",
+        "tonalRamp": [
+          "#1E293B",
+          "#334155",
+          "#475569",
+          "#64748B",
+          "#94A3B8",
+          "#CBD5E1",
+          "#E2E8F0",
+          "#F1F5F9"
+        ]
+      },
+      "hair-border": {
+        "role": "neutral",
+        "displayName": "Hair Border",
+        "canonical": "oklch(91% 0.01 240)",
+        "tonalRamp": [
+          "#CBD5E1",
+          "#D1D9E0",
+          "#D8DFE5",
+          "#DCE3E9",
+          "#E2E8F0",
+          "#EAEEF3",
+          "#F1F5F9",
+          "#F8FAFC"
+        ]
+      },
+      "grid-dot": {
+        "role": "neutral",
+        "displayName": "Grid Dot",
+        "canonical": "oklch(33% 0.025 264 / 0.10)",
+        "tonalRamp": [
+          "#0F172A",
+          "#1E293B",
+          "#2D3748",
+          "#334155",
+          "#475569",
+          "#64748B",
+          "#94A3B8",
+          "#CBD5E1"
+        ]
+      },
+      "danger-red": {
+        "role": "danger",
+        "displayName": "Danger Red",
+        "canonical": "oklch(60% 0.22 25)",
+        "tonalRamp": [
+          "#450A0A",
+          "#7F1D1D",
+          "#991B1B",
+          "#B91C1C",
+          "#DC2626",
+          "#E53E3E",
+          "#FCA5A5",
+          "#FEF2F2"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "wordmark": { "displayName": "Wordmark", "purpose": "Product title only. The largest type in chrome (14px)." },
+      "body": { "displayName": "Body", "purpose": "Tool labels, button labels, the collaborator count." },
+      "caption": { "displayName": "Caption", "purpose": "Helper text, status lines, sub-labels next to controls." },
+      "label": { "displayName": "Label", "purpose": "Numeric readouts inside controls (zoom %, stroke size px)." },
+      "kbd": { "displayName": "Keycap", "purpose": "Keyboard shortcuts inside tooltips. Never standalone." }
+    },
+    "shadows": [
+      { "name": "rest", "value": "0 1px 2px 0 rgba(15, 23, 42, 0.05)", "purpose": "Default lift on every chrome panel." },
+      { "name": "hover-md", "value": "0 4px 6px -1px rgba(15, 23, 42, 0.10), 0 2px 4px -2px rgba(15, 23, 42, 0.06)", "purpose": "Tool buttons on hover and active panels." },
+      { "name": "presence-glow", "value": "0 10px 25px rgba(15, 23, 42, 0.10)", "purpose": "Diffuse halo under remote-cursor name pills floating over the canvas." },
+      { "name": "avatar-ring", "value": "0 0 0 2px rgba(255, 255, 255, 0.95), 0 8px 20px rgba(15, 23, 42, 0.08)", "purpose": "Double effect on collaborator avatars: a 2px white inner ring plus outer drop." }
+    ],
+    "motion": [
+      { "name": "panel-entrance", "value": "opacity 200ms ease-out, transform 200ms cubic-bezier(0.22, 1, 0.36, 1)", "purpose": "Initial fade-and-slide for every chrome panel (8-10px translate on the axis the panel enters from)." },
+      { "name": "tool-hover-lift", "value": "transform 200ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 200ms ease-out", "purpose": "Tool buttons lift by 2px and shadow steps from rest to hover-md." },
+      { "name": "color-dot-press", "value": "transform 120ms cubic-bezier(0.22, 1, 0.36, 1)", "purpose": "Color dots scale 1.06 on hover and 0.98 on active." },
+      { "name": "remote-cursor-fade", "value": "opacity 300ms ease-out", "purpose": "Remote cursors fade out after 3000ms of inactivity from the peer." }
+    ],
+    "noisePattern": {
+      "name": "cb-noise",
+      "purpose": "6% opacity SVG fractal noise overlay applied (mix-blend: multiply) to every Chrome Panel. The 'grain' that makes the panels read as vellum instead of plastic.",
+      "css": ".cb-noise { position: relative; } .cb-noise::before { content: ''; position: absolute; inset: 0; pointer-events: none; background-image: url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='220' height='220' filter='url(%23n)' opacity='.35'/%3E%3C/svg%3E\"); mix-blend-mode: multiply; opacity: 0.06; border-radius: inherit; }"
+    },
+    "breakpoints": [
+      { "name": "max-chrome-width", "value": "1400px", "purpose": "Maximum width of the top chrome row before margin auto-centers. The canvas itself is full-bleed." }
+    ]
+  },
+  "components": [
+    {
+      "name": "Tool Button (Rest)",
+      "kind": "button",
+      "refersTo": "tool-button",
+      "description": "The 40px squircle button in the left toolbar. Default unselected state.",
+      "html": "<button class=\"ds-tool-button\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 19l7-7 3 3-7 7-3-3z\"/><path d=\"M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z\"/><path d=\"M2 2l7.586 7.586\"/><circle cx=\"11\" cy=\"11\" r=\"2\"/></svg></button>",
+      "css": ".ds-tool-button { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 18px; border: 1px solid rgba(226, 232, 240, 0.7); background-color: rgba(255, 255, 255, 0.8); color: #334155; box-shadow: 0 1px 2px 0 rgba(15, 23, 42, 0.05); backdrop-filter: blur(8px); cursor: pointer; transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 200ms ease-out, background-color 150ms ease-out; } .ds-tool-button:hover { transform: translateY(-2px); box-shadow: 0 4px 6px -1px rgba(15, 23, 42, 0.10), 0 2px 4px -2px rgba(15, 23, 42, 0.06); } .ds-tool-button:focus-visible { outline: 2px solid #3175F1; outline-offset: 2px; }"
+    },
+    {
+      "name": "Tool Button (Active)",
+      "kind": "button",
+      "refersTo": "tool-button-active",
+      "description": "Selected tool. Inverts to Notebook Ink. No hover lift when already active.",
+      "html": "<button class=\"ds-tool-button-active\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M5 3l14 9-6 2-2 6L5 3z\"/></svg></button>",
+      "css": ".ds-tool-button-active { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 18px; border: 1px solid #E2E8F0; background-color: #0F172A; color: #FFFFFF; box-shadow: 0 4px 6px -1px rgba(15, 23, 42, 0.10), 0 2px 4px -2px rgba(15, 23, 42, 0.06); cursor: pointer; transition: background-color 150ms ease-out; } .ds-tool-button-active:hover { background-color: #1E293B; }"
+    },
+    {
+      "name": "Chrome Panel",
+      "kind": "card",
+      "refersTo": "chrome-panel",
+      "description": "The signature container. Frosted vellum surface used for every floating panel in the chrome.",
+      "html": "<div class=\"ds-chrome-panel\"><div class=\"ds-chrome-panel__heading\">Color</div><div class=\"ds-chrome-panel__caption\">Stroke</div></div>",
+      "css": ".ds-chrome-panel { position: relative; padding: 10px 14px; border-radius: 16px; border: 1px solid rgba(226, 232, 240, 0.7); background-color: rgba(255, 255, 255, 0.85); box-shadow: 0 1px 2px 0 rgba(15, 23, 42, 0.05); backdrop-filter: blur(8px); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; } .ds-chrome-panel::before { content: ''; position: absolute; inset: 0; pointer-events: none; background-image: url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='220' height='220' filter='url(%23n)' opacity='.35'/%3E%3C/svg%3E\"); mix-blend-mode: multiply; opacity: 0.06; border-radius: inherit; } .ds-chrome-panel__heading { font-size: 12px; font-weight: 500; color: #334155; } .ds-chrome-panel__caption { font-size: 11px; color: #64748B; margin-top: 2px; }"
+    },
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Solid Notebook Ink button. Used for Save and other primary CTAs.",
+      "html": "<button class=\"ds-btn-primary\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z\"/><polyline points=\"17 21 17 13 7 13 7 21\"/><polyline points=\"7 3 7 8 15 8\"/></svg><span>Save</span></button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 16px; border: 1px solid #0F172A; background-color: #0F172A; color: #FFFFFF; font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: 12px; font-weight: 500; cursor: pointer; transition: background-color 150ms ease-out; } .ds-btn-primary:hover { background-color: #1E293B; } .ds-btn-primary:focus-visible { outline: 2px solid #3175F1; outline-offset: 2px; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Translucent Panel-White button. Used for Reset, Export, and other secondary actions inside chrome.",
+      "html": "<button class=\"ds-btn-secondary\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4\"/><polyline points=\"7 10 12 15 17 10\"/><line x1=\"12\" y1=\"15\" x2=\"12\" y2=\"3\"/></svg><span>Export</span></button>",
+      "css": ".ds-btn-secondary { display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 16px; border: 1px solid rgba(226, 232, 240, 0.7); background-color: rgba(255, 255, 255, 0.7); color: #1E293B; font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: 12px; font-weight: 500; box-shadow: 0 1px 2px 0 rgba(15, 23, 42, 0.05); backdrop-filter: blur(8px); cursor: pointer; transition: background-color 150ms ease-out; } .ds-btn-secondary:hover { background-color: #FFFFFF; } .ds-btn-secondary:focus-visible { outline: 2px solid #3175F1; outline-offset: 2px; }"
+    },
+    {
+      "name": "Color Dot",
+      "kind": "chip",
+      "refersTo": "color-dot",
+      "description": "32px circle button for the user's drawing color preset. Active state adds a Notebook Ink border plus an inset ring.",
+      "html": "<button class=\"ds-color-dot\" aria-label=\"Color Blue\" style=\"--dot-color:#3175F1;\"></button>",
+      "css": ".ds-color-dot { position: relative; width: 32px; height: 32px; border-radius: 9999px; border: 1px solid #E2E8F0; background-color: var(--dot-color, #3175F1); box-shadow: 0 1px 2px 0 rgba(15, 23, 42, 0.05); cursor: pointer; transition: transform 120ms cubic-bezier(0.22, 1, 0.36, 1); } .ds-color-dot:hover { transform: scale(1.06); } .ds-color-dot:active { transform: scale(0.98); } .ds-color-dot[aria-pressed=\"true\"] { border-color: #0F172A; } .ds-color-dot[aria-pressed=\"true\"]::after { content: ''; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 2px rgba(15, 23, 42, 0.20); }"
+    },
+    {
+      "name": "Collaborator Avatar",
+      "kind": "custom",
+      "refersTo": "collaborator-avatar",
+      "description": "Stacked avatar in the collaborator counter. White outer ring (28px) with a colored 24px inner circle and a single uppercase initial.",
+      "html": "<div class=\"ds-avatar\" title=\"Rafael\"><div class=\"ds-avatar__inner\" style=\"--peer-color:#3175F1;\">R</div></div>",
+      "css": ".ds-avatar { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 9999px; border: 1px solid #FFFFFF; background-color: #FFFFFF; box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.95), 0 8px 20px rgba(15, 23, 42, 0.08); } .ds-avatar__inner { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 9999px; background-color: var(--peer-color, #3175F1); color: #FFFFFF; font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: 11px; font-weight: 600; }"
+    },
+    {
+      "name": "Context Menu Item",
+      "kind": "custom",
+      "refersTo": "context-menu-item",
+      "description": "A single row inside the context menu. Body Slate text by default; Danger Red for destructive actions. Keyboard shortcut sits in muted slate on the right.",
+      "html": "<button class=\"ds-menu-item\"><span class=\"ds-menu-item__label\">Bring to front</span><span class=\"ds-menu-item__shortcut\">⇧⌘]</span></button>",
+      "css": ".ds-menu-item { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 16px; padding: 6px 10px; border: none; border-radius: 6px; background-color: transparent; color: #334155; font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: 13px; text-align: left; cursor: pointer; transition: background-color 150ms ease-out; } .ds-menu-item:hover { background-color: #F1F5F9; } .ds-menu-item--danger { color: #DC2626; } .ds-menu-item--danger:hover { background-color: #FEF2F2; } .ds-menu-item__shortcut { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 11px; color: #94A3B8; }"
+    },
+    {
+      "name": "Kbd Keycap",
+      "kind": "custom",
+      "refersTo": "kbd",
+      "description": "Keyboard shortcut chip used inside tooltips. Never standalone.",
+      "html": "<span class=\"ds-kbd\">P</span>",
+      "css": ".ds-kbd { display: inline-grid; place-items: center; min-width: 18px; padding: 1px 5px; border-radius: 4px; border: 1px solid rgba(255, 255, 255, 0.25); background-color: rgba(255, 255, 255, 0.10); color: #FFFFFF; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 10px; font-weight: 500; letter-spacing: 0.02em; line-height: 1; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Quiet Notebook",
+    "overview": "CollabBoard's visual system is a quiet notebook, paper laid flat under a working light. The canvas is the page: a calm cream wash with a faint dotted graph. Everything else, the toolbar, the panels, the cursor labels, behaves like frosted vellum laid over the page, present enough to be useful, transparent enough to not break the spell of the work underneath. Chrome never insists on itself. It floats. Restraint is the signature. One ink color does the talking, one accent does the selecting. Color is otherwise reserved for the user's marks. The system explicitly rejects Miro / Mural enterprise blue, generic-SaaS chrome, skeuomorphic crafting, and childish cartoon aesthetics. The frosted-glass treatment on chrome panels is a deliberate, signature exception to the general no-glassmorphism rule.",
+    "keyCharacteristics": [
+      "Paper-cream canvas with a 22px slate-tinted dot grid.",
+      "Slate-900 wordmark and primary actions; selection in a single clean blue.",
+      "Frosted-vellum chrome: translucent white panels (~85% opacity) with backdrop-blur, hair borders, and a 6% noise overlay (cb-noise).",
+      "Rounded radii from 10px (inner controls) up to 18px (panel containers); pill-radius on dots and avatars.",
+      "Motion: short, eased entrances on chrome (~150-200ms, opacity + 8-10px translate). Hover lifts panels by 2px. No bounce, no elastic.",
+      "Inter throughout, in five tight roles (wordmark, body, caption, label, kbd)."
+    ],
+    "rules": [
+      { "name": "The One Voice Rule", "body": "Selection Blue (#3175F1) appears on no more than 10% of the visible chrome at any time. It earns its meaning by being rare.", "section": "colors" },
+      { "name": "The No Black Rule", "body": "Notebook Ink (#0F172A) replaces black everywhere in chrome. The only true black in the surface lives inside the user's drawing palette, where the user chose it.", "section": "colors" },
+      { "name": "The Paper Rule", "body": "The canvas background is Paper Cream (#F7FAFC), never pure white. White surfaces only exist as translucent chrome floating over the cream.", "section": "colors" },
+      { "name": "The Small Chrome Rule", "body": "No chrome text exceeds 14px. If a label needs to be bigger to be readable, the affordance is wrong, not the type size.", "section": "typography" },
+      { "name": "The One Family Rule", "body": "Inter is the only typeface used in chrome. Adding a display serif, quirky display sans, or brand display face is a category-reflex mistake.", "section": "typography" },
+      { "name": "The Frosted Vellum Rule", "body": "Chrome panels compose four ingredients: a translucent white background (bg-white/80 to bg-white/90), backdrop-filter blur(8px), a 1px Hair Border at 70% opacity, and a 6% multiply-blended SVG fractal-noise overlay (cb-noise). Removing any one of the four breaks the effect.", "section": "elevation" },
+      { "name": "The Flat Canvas Rule", "body": "The canvas itself is flat. Drawn objects cast no shadow on the canvas. Depth exists only above the canvas, never on it.", "section": "elevation" },
+      { "name": "The Hover Lift Rule", "body": "Tool buttons translate up by 2px on hover, accompanied by the shadow stepping from rest to hover. No other chrome element moves on hover.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do use the four-ingredient Frosted Vellum recipe for every chrome panel: bg-white/80-90 + backdrop-blur + Hair Border + cb-noise. Apply all four or none.",
+      "Do keep Selection Blue (#3175F1) on no more than 10% of any visible chrome.",
+      "Do use Notebook Ink (#0F172A) in place of black everywhere in chrome.",
+      "Do keep the canvas background as Paper Cream (#F7FAFC) and never let chrome surfaces use the same cream.",
+      "Do lift tool buttons by 2px and step their shadow from rest to hover on hover. No other element moves.",
+      "Do render the 22px slate-dotted grid on the canvas behind everything, at 10% opacity.",
+      "Do keep all chrome text at or below 14px and in Inter. Wordmark is the maximum.",
+      "Do use one of the five typography roles (wordmark, body, caption, label, kbd). Do not invent new ones for one-off labels.",
+      "Do respect prefers-reduced-motion: panel entrance translations collapse to fade-only, hover lifts become instant shadow changes."
+    ],
+    "donts": [
+      "Don't introduce Miro / Mural enterprise blue. Selection Blue is the only blue in chrome.",
+      "Don't ship generic-SaaS chrome: indigo gradients, hero-metric cards, gradient buttons, pill badges, identical card grids.",
+      "Don't use skeuomorphic paper textures, wood-grain panels, or shadows that imitate a physical desk. The cb-noise overlay is grain, not material.",
+      "Don't use childish or cartoon aesthetics: rainbow accents, oversized rounded mascot icons, Comic Sans whimsy.",
+      "Don't apply backdrop-blur to anything that isn't a chrome panel. Glassmorphism is the chrome's signature and only the chrome's signature.",
+      "Don't apply background-clip: text with a gradient.",
+      "Don't use border-left or border-right greater than 1px as a colored stripe accent.",
+      "Don't use em dashes in UI copy.",
+      "Don't nest Chrome Panels more than one level deep.",
+      "Don't add a third saturated color to chrome. Notebook Ink and Selection Blue are the only chrome colors.",
+      "Don't introduce a second typeface. Inter is the family.",
+      "Don't animate width, height, margin, padding, top, or left. Use transform and opacity.",
+      "Don't use bounce or elastic easing. Short, exponential ease-out only.",
+      "Don't drop shadows on objects drawn on the canvas. The canvas is flat; depth lives above it."
+    ]
+  }
+}
