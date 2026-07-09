@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   BringToFront,
   ChevronDown,
@@ -22,7 +22,7 @@ import {
   Trash2,
   Users,
 } from "lucide-react";
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -163,6 +163,31 @@ function measureTextItem(text: string, fontSize: number): { w: number; h: number
   const lineH = textLineHeight(fontSize);
   const h = lines.length * lineH - TEXT_LINE_GAP;
   return { w: Math.max(maxW, fontSize * 0.5), h };
+}
+
+// Map a viewport (client) coordinate to a caret position inside a contentEditable.
+// Returns null when the platform can't resolve a caret at that point.
+function caretRangeFromPoint(clientX: number, clientY: number): Range | null {
+  const doc = document as Document & {
+    caretRangeFromPoint?: (x: number, y: number) => Range | null;
+    caretPositionFromPoint?: (
+      x: number,
+      y: number,
+    ) => { offsetNode: Node; offset: number } | null;
+  };
+  if (doc.caretRangeFromPoint) {
+    return doc.caretRangeFromPoint(clientX, clientY);
+  }
+  if (doc.caretPositionFromPoint) {
+    const pos = doc.caretPositionFromPoint(clientX, clientY);
+    if (pos) {
+      const range = document.createRange();
+      range.setStart(pos.offsetNode, pos.offset);
+      range.collapse(true);
+      return range;
+    }
+  }
+  return null;
 }
 
 function toCanvasPoint(
@@ -482,6 +507,7 @@ export default function WhiteboardPage() {
   const contentCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const [tool, setTool] = useState<Tool>("pen");
+  const [colorOpen, setColorOpen] = useState<boolean>(false);
   const [color, setColor] = useState<string>("#3182CE");
   const [fill, setFill] = useState<string>(() => makeShapeFill("#3182CE", 0.1));
   const [fillOpacity, setFillOpacity] = useState(0.1);
@@ -503,6 +529,9 @@ export default function WhiteboardPage() {
   const editorRef = useRef<HTMLDivElement | null>(null);
   const editorContentRef = useRef<string>("");
   const editingTextRef = useRef<EditingText | null>(null);
+  // Client-space point where the caret should land when an editor opens.
+  // null => collapse to the end of the content (used for brand-new text).
+  const pendingCaretRef = useRef<{ x: number; y: number } | null>(null);
   useEffect(() => {
     editingTextRef.current = editingText;
   }, [editingText]);
@@ -511,6 +540,11 @@ export default function WhiteboardPage() {
     y: 0,
     zoom: 1,
   });
+  const [eraserCursor, setEraserCursor] = useState<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    if (tool !== "eraser") setEraserCursor(null);
+  }, [tool]);
 
   const [items, setItems] = useState<BoardItem[]>([]);
   const itemsRef = useRef<BoardItem[]>(items);
@@ -1075,7 +1109,7 @@ export default function WhiteboardPage() {
     );
   }, [broadcastDraw, commitHistory]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!editingText) return;
     const el = editorRef.current;
     if (!el) return;
@@ -1084,13 +1118,41 @@ export default function WhiteboardPage() {
       el.innerText = editingText.content;
     }
     el.dataset.empty = editingText.content.length === 0 ? "true" : "false";
-    el.focus();
-    const range = document.createRange();
-    range.selectNodeContents(el);
-    range.collapse(false);
-    const sel = window.getSelection();
-    sel?.removeAllRanges();
-    sel?.addRange(range);
+
+    // Point (in client space) where the caret should land; null => end of text.
+    const point = pendingCaretRef.current;
+    pendingCaretRef.current = null;
+
+    // Focus on the next frame. The click that opened this editor landed on the
+    // canvas, and the browser's native focus handling for that click runs after
+    // our synchronous code — focusing now would be immediately undone (which is
+    // what forced a second click). Deferring puts our focus after that.
+    const raf = requestAnimationFrame(() => {
+      const node = editorRef.current;
+      if (!node) return;
+      node.focus();
+
+      const sel = window.getSelection();
+      let range: Range | null = null;
+
+      // Place the caret where the user actually clicked, falling back to the end.
+      if (point) {
+        const fromPoint = caretRangeFromPoint(point.x, point.y);
+        if (fromPoint && node.contains(fromPoint.startContainer)) {
+          range = fromPoint;
+        }
+      }
+      if (!range) {
+        range = document.createRange();
+        range.selectNodeContents(node);
+        range.collapse(false);
+      }
+
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+    });
+
+    return () => cancelAnimationFrame(raf);
   }, [editingText?.id]);
 
   useEffect(() => {
@@ -1122,7 +1184,12 @@ export default function WhiteboardPage() {
     const rect = canvas.getBoundingClientRect();
     const p = toCanvasPoint(e.clientX, e.clientY, viewport, rect);
 
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    // Don't capture the pointer for the text tool: capture keeps focus on the
+    // canvas and prevents the contentEditable editor from grabbing it on the
+    // first click (which is what made text take two clicks to start).
+    if (tool !== "text") {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    }
     setIsPointerDown(true);
     if (contextMenu) setContextMenu(null);
 
@@ -1188,6 +1255,27 @@ export default function WhiteboardPage() {
     if (tool === "text") {
       if (editingTextRef.current) return;
       setSelectedId(null);
+      // Single click on an existing text edits it; the caret lands where clicked.
+      for (let i = items.length - 1; i >= 0; i--) {
+        const it = items[i];
+        if (it.type !== "text") continue;
+        const b = itemBounds(it);
+        if (b && hitBounds(p, b)) {
+          pendingCaretRef.current = { x: e.clientX, y: e.clientY };
+          setEditingText({
+            id: it.data.id,
+            x: it.data.x,
+            y: it.data.y,
+            content: it.data.text,
+            fontSize: it.data.fontSize,
+            color: it.data.color,
+            isNew: false,
+          });
+          return;
+        }
+      }
+      // Otherwise start a brand-new text at the click point.
+      pendingCaretRef.current = null;
       setEditingText({
         id: uid(),
         x: p.x,
@@ -1207,6 +1295,8 @@ export default function WhiteboardPage() {
 
     const rect = canvas.getBoundingClientRect();
     const p = toCanvasPoint(e.clientX, e.clientY, viewport, rect);
+
+    setEraserCursor(tool === "eraser" ? { x: e.clientX, y: e.clientY } : null);
 
     // Broadcast cursor position to peers
     broadcastCursor(p.x, p.y, true);
@@ -1839,122 +1929,160 @@ export default function WhiteboardPage() {
             transition={{ delay: 0.03 }}
             className="pointer-events-auto rounded-2xl border border-slate-200/70 bg-white/85 p-2 shadow-md backdrop-blur cb-noise"
           >
-            <div className="w-[224px] rounded-xl border border-slate-200/70 bg-white/70 p-2">
-              <div className="flex items-center justify-between">
-                <div className="text-xs font-medium text-slate-700">Color</div>
-                <div className="text-[11px] text-slate-500">
-                  {tool === "text" ||
-                  editingText !== null ||
-                  items.some((it) => it.type === "text" && it.data.id === selectedId)
-                    ? "Text"
-                    : "Stroke"}
-                </div>
-              </div>
-              
-              <ColorPicker
-                value={customColor}
-                onChange={(c) => {
-                  const f = makeShapeFill(c, fillOpacity);
-                  setCustomColor(c);
-                  setColor(c);
-                  setFill(f);
-                  recolorSelected(c, f);
-                }}
-              />
-
-              <div className="mt-3 grid grid-cols-3 gap-2">
-                {PRESET_COLORS.map((c) => (
-                  <ColorDot
-                    key={c.value}
-                    value={c.value}
-                    active={color.toLowerCase() === c.value.toLowerCase()}
-                    onClick={() => {
-                      const f = makeShapeFill(c.value, fillOpacity);
-                      setColor(c.value);
-                      setCustomColor(c.value);
-                      setFill(f);
-                      recolorSelected(c.value, f);
-                    }}
-                    testId={`button-color-${c.name.toLowerCase()}`}
+            <div className="w-[224px] py-1">
+              <button
+                type="button"
+                onClick={() => setColorOpen((v) => !v)}
+                aria-expanded={colorOpen}
+                data-testid="button-color-toggle"
+                className="flex w-full items-center justify-between rounded-md px-1 py-0.5 transition-colors hover:bg-slate-100/70"
+              >
+                <div className="flex items-center gap-2">
+                  <span
+                    className="size-3 rounded-full border border-black/10"
+                    style={{ backgroundColor: color }}
                   />
-                ))}
-              </div>
-
-              {(tool === "rect" ||
-                tool === "ellipse" ||
-                items.some((it) => it.type === "shape" && it.data.id === selectedId)) && (
-                <div className="mt-3">
-                  <div className="flex items-center justify-between">
-                    <div className="text-xs font-medium text-slate-700">Fill opacity</div>
-                    <div data-testid="text-fill-opacity" className="text-[11px] text-slate-500">
-                      {Math.round(fillOpacity * 100)}%
-                    </div>
-                  </div>
-                  <div className="mt-2 px-1">
-                    <Slider
-                      data-testid="slider-fill-opacity"
-                      value={[Math.round(fillOpacity * 100)]}
-                      min={0}
-                      max={100}
-                      step={1}
-                      onValueChange={(v) => applyFillOpacity((v[0] ?? 0) / 100)}
-                    />
-                  </div>
+                  <div className="text-xs font-medium text-slate-700">Color</div>
                 </div>
-              )}
+                <div className="flex items-center gap-1.5">
+                  <div className="text-[11px] text-slate-500">
+                    {tool === "text" ||
+                    editingText !== null ||
+                    items.some((it) => it.type === "text" && it.data.id === selectedId)
+                      ? "Text"
+                      : "Stroke"}
+                  </div>
+                  {colorOpen ? (
+                    <ChevronUp className="size-3.5 text-slate-400" />
+                  ) : (
+                    <ChevronDown className="size-3.5 text-slate-400" />
+                  )}
+                </div>
+              </button>
 
-              {(() => {
-                const isTextContext =
-                  tool === "text" ||
-                  editingText !== null ||
-                  items.some((it) => it.type === "text" && it.data.id === selectedId);
-                if (isTextContext) {
-                  const displayFont = clamp(Math.round(fontSize), TEXT_MIN_FONT, TEXT_MAX_FONT);
-                  return (
-                    <div className="mt-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="text-xs font-medium text-slate-700">Text size</div>
-                        <div
-                          data-testid="text-font-size"
-                          className="text-[11px] tabular-nums text-slate-500"
-                        >
-                          {displayFont}px
-                        </div>
-                      </div>
-                      <div className="mt-2 px-1">
-                        <Slider
-                          data-testid="slider-font-size"
-                          value={[displayFont]}
-                          min={TEXT_MIN_FONT}
-                          max={TEXT_MAX_FONT}
-                          step={1}
-                          onValueChange={(v) => applyFontSize(v[0] ?? 18)}
-                        />
+              <AnimatePresence initial={false}>
+                {colorOpen && (
+                  <motion.div
+                    key="color-content"
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: "auto", opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.18, ease: "easeOut" }}
+                    className="overflow-hidden"
+                  >
+                    <div className="pt-3">
+                      <ColorPicker
+                        value={customColor}
+                        onChange={(c) => {
+                          const f = makeShapeFill(c, fillOpacity);
+                          setCustomColor(c);
+                          setColor(c);
+                          setFill(f);
+                          recolorSelected(c, f);
+                        }}
+                      />
+
+                      <div className="mt-3 grid grid-cols-3 gap-2">
+                        {PRESET_COLORS.map((c) => (
+                          <ColorDot
+                            key={c.value}
+                            value={c.value}
+                            active={color.toLowerCase() === c.value.toLowerCase()}
+                            onClick={() => {
+                              const f = makeShapeFill(c.value, fillOpacity);
+                              setColor(c.value);
+                              setCustomColor(c.value);
+                              setFill(f);
+                              recolorSelected(c.value, f);
+                            }}
+                            testId={`button-color-${c.name.toLowerCase()}`}
+                          />
+                        ))}
                       </div>
                     </div>
-                  );
-                }
-                return (
-                  <div className="mt-3">
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              <div className="my-3 h-px bg-slate-200/70" />
+
+              <div className="space-y-3">
+                {(tool === "rect" ||
+                  tool === "ellipse" ||
+                  items.some((it) => it.type === "shape" && it.data.id === selectedId)) && (
+                  <div>
                     <div className="flex items-center justify-between">
-                      <div className="text-xs font-medium text-slate-700">Size</div>
-                      <div data-testid="text-size" className="text-[11px] text-slate-500">
-                        {strokeSize}px
+                      <div className="text-xs font-medium text-slate-700">Fill opacity</div>
+                      <div data-testid="text-fill-opacity" className="text-[11px] text-slate-500">
+                        {Math.round(fillOpacity * 100)}%
                       </div>
                     </div>
                     <div className="mt-2 px-1">
                       <Slider
-                        data-testid="slider-size"
-                        value={[strokeSize]}
-                        min={1}
-                        max={14}
+                        data-testid="slider-fill-opacity"
+                        value={[Math.round(fillOpacity * 100)]}
+                        min={0}
+                        max={100}
                         step={1}
-                        onValueChange={(v) => setStrokeSize(v[0] ?? 3)}
+                        onValueChange={(v) => applyFillOpacity((v[0] ?? 0) / 100)}
                       />
                     </div>
                   </div>
-                );
-              })()}
+                )}
+
+                {(() => {
+                  const isTextContext =
+                    tool === "text" ||
+                    editingText !== null ||
+                    items.some((it) => it.type === "text" && it.data.id === selectedId);
+                  if (isTextContext) {
+                    const displayFont = clamp(Math.round(fontSize), TEXT_MIN_FONT, TEXT_MAX_FONT);
+                    return (
+                      <div>
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="text-xs font-medium text-slate-700">Text size</div>
+                          <div
+                            data-testid="text-font-size"
+                            className="text-[11px] tabular-nums text-slate-500"
+                          >
+                            {displayFont}px
+                          </div>
+                        </div>
+                        <div className="mt-2 px-1">
+                          <Slider
+                            data-testid="slider-font-size"
+                            value={[displayFont]}
+                            min={TEXT_MIN_FONT}
+                            max={TEXT_MAX_FONT}
+                            step={1}
+                            onValueChange={(v) => applyFontSize(v[0] ?? 18)}
+                          />
+                        </div>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <div className="text-xs font-medium text-slate-700">Size</div>
+                        <div data-testid="text-size" className="text-[11px] text-slate-500">
+                          {strokeSize}px
+                        </div>
+                      </div>
+                      <div className="mt-2 px-1">
+                        <Slider
+                          data-testid="slider-size"
+                          value={[strokeSize]}
+                          min={1}
+                          max={14}
+                          step={1}
+                          onValueChange={(v) => setStrokeSize(v[0] ?? 3)}
+                        />
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
             </div>
           </motion.div>
         </div>
@@ -2148,12 +2276,15 @@ export default function WhiteboardPage() {
                           : "cursor-default"
                   : tool === "text"
                     ? "cursor-text"
-                    : "cursor-crosshair",
+                    : tool === "eraser"
+                      ? "cursor-none"
+                      : "cursor-crosshair",
             )}
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
             onPointerCancel={onPointerUp}
+            onPointerLeave={() => setEraserCursor(null)}
             onDoubleClick={(e) => {
               const canvas = canvasRef.current;
               if (!canvas) return;
@@ -2166,6 +2297,7 @@ export default function WhiteboardPage() {
                 if (b && hitBounds(p, b)) {
                   e.preventDefault();
                   setSelectedId(null);
+                  pendingCaretRef.current = { x: e.clientX, y: e.clientY };
                   setEditingText({
                     id: it.data.id,
                     x: it.data.x,
@@ -2297,6 +2429,22 @@ export default function WhiteboardPage() {
               </div>
             ))}
           </div>
+
+          {tool === "eraser" && eraserCursor && (
+            <div
+              className="pointer-events-none fixed left-0 top-0 z-[60]"
+              style={{ transform: `translate(${eraserCursor.x}px, ${eraserCursor.y}px)` }}
+              data-testid="eraser-cursor"
+            >
+              <div
+                className="-translate-x-1/2 -translate-y-1/2 rounded-full border border-slate-900/70 bg-white/10"
+                style={{
+                  width: `${Math.max(10, strokeSize * 4) * viewport.zoom}px`,
+                  height: `${Math.max(10, strokeSize * 4) * viewport.zoom}px`,
+                }}
+              />
+            </div>
+          )}
 
           {/* Help */}
           <div className="pointer-events-none absolute bottom-4 left-4 z-20">
