@@ -9,6 +9,7 @@ import {
   Hand,
   HelpCircle,
   ImagePlus,
+  Link2,
   Minus,
   MousePointer2,
   PenTool,
@@ -28,6 +29,7 @@ import { Kbd } from "@/components/ui/kbd";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Slider } from "@/components/ui/slider";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { useCollaboration } from "@/hooks/use-collaboration";
 
@@ -85,6 +87,67 @@ export type BoardItem =
   | { type: "shape"; data: Shape }
   | { type: "text"; data: TextItem }
   | { type: "image"; data: ImageItem };
+
+const ROOM_ID_PATTERN = /^[A-Za-z0-9_-]{3,80}$/;
+
+function getRoomIdFromPath() {
+  const match = /^\/c\/([^/?#]+)/.exec(window.location.pathname);
+  if (!match) return null;
+
+  const roomId = decodeURIComponent(match[1]);
+  return ROOM_ID_PATTERN.test(roomId) ? roomId : null;
+}
+
+function createRoomId() {
+  const browserCrypto = globalThis.crypto;
+
+  if (browserCrypto?.randomUUID) {
+    return browserCrypto.randomUUID();
+  }
+
+  if (browserCrypto?.getRandomValues) {
+    const bytes = new Uint8Array(16);
+    browserCrypto.getRandomValues(bytes);
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  }
+
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`;
+}
+
+async function copyTextToClipboard(text: string) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await Promise.race([
+        navigator.clipboard.writeText(text),
+        new Promise((_, reject) => {
+          window.setTimeout(() => reject(new Error("Clipboard write timed out")), 1000);
+        }),
+      ]);
+      return true;
+    } catch {
+      // Fall through to the textarea copy path for restricted browser surfaces.
+    }
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+
+  try {
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}
 
 function clamp(n: number, a: number, b: number) {
   return Math.min(b, Math.max(a, n));
@@ -497,6 +560,7 @@ function ColorPicker({
 }
 
 export default function WhiteboardPage() {
+  const [roomId] = useState(() => getRoomIdFromPath() ?? createRoomId());
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const rafRef = useRef<number | null>(null);
@@ -505,6 +569,14 @@ export default function WhiteboardPage() {
   
   // Offscreen canvas for drawing content (strokes, shapes, etc.) - eraser affects this layer only
   const contentCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    const currentRoomId = getRoomIdFromPath();
+    if (currentRoomId === roomId) return;
+
+    const nextPath = `/c/${encodeURIComponent(roomId)}`;
+    window.history.replaceState(null, "", `${nextPath}${window.location.search}${window.location.hash}`);
+  }, [roomId]);
 
   const [tool, setTool] = useState<Tool>("pen");
   const [colorOpen, setColorOpen] = useState<boolean>(false);
@@ -808,7 +880,13 @@ export default function WhiteboardPage() {
     broadcastCursor,
     broadcastDraw,
     broadcastClear,
-  } = useCollaboration(handleRemoteDraw, handleRemoteClear, handleSyncRequest, handleSyncReceive);
+  } = useCollaboration(
+    roomId,
+    handleRemoteDraw,
+    handleRemoteClear,
+    handleSyncRequest,
+    handleSyncReceive,
+  );
 
   const displayedZoomPct = useMemo(() => formatPct(zoom), [zoom]);
 
@@ -1567,6 +1645,25 @@ export default function WhiteboardPage() {
     setViewport({ x: 0, y: 0, zoom: 1 });
   };
 
+  const shareUrl = `${window.location.origin}/c/${encodeURIComponent(roomId)}`;
+
+  const shareBoard = async () => {
+    const copied = await copyTextToClipboard(shareUrl);
+
+    if (copied) {
+      toast({
+        title: "Share link copied",
+        description: "Anyone with the link can join this board.",
+      });
+      return;
+    }
+
+    toast({
+      title: "Share link ready",
+      description: "Copy the permalink from the address bar.",
+    });
+  };
+
   const exportPng = async () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -1804,6 +1901,16 @@ export default function WhiteboardPage() {
                 </div>
               </div>
             </div>
+
+            <Button
+              data-testid="button-share"
+              onClick={shareBoard}
+              variant="secondary"
+              className="rounded-2xl border border-slate-200/70 bg-white/80 text-slate-800 shadow-sm backdrop-blur hover:bg-white"
+            >
+              <Link2 className="mr-2 size-4" />
+              Share
+            </Button>
 
             <Button
               data-testid="button-export"
