@@ -24,12 +24,13 @@ import {
 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Kbd } from "@/components/ui/kbd";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Slider } from "@/components/ui/slider";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { useCollaboration } from "@/hooks/use-collaboration";
+import { DISPLAY_NAME_MAX, useCollaboration } from "@/hooks/use-collaboration";
 
 export type Tool =
   | "select"
@@ -802,6 +803,7 @@ export default function WhiteboardPage() {
   const {
     myName,
     myColor,
+    setDisplayName,
     remotePeers,
     isConnected,
     peerCount,
@@ -809,6 +811,14 @@ export default function WhiteboardPage() {
     broadcastDraw,
     broadcastClear,
   } = useCollaboration(handleRemoteDraw, handleRemoteClear, handleSyncRequest, handleSyncReceive);
+
+  const [nameOpen, setNameOpen] = useState(false);
+  const [nameDraft, setNameDraft] = useState(myName);
+
+  const commitDisplayName = () => {
+    setDisplayName(nameDraft);
+    setNameOpen(false);
+  };
 
   const displayedZoomPct = useMemo(() => formatPct(zoom), [zoom]);
 
@@ -1785,22 +1795,91 @@ export default function WhiteboardPage() {
                   {collaborators.length} online
                 </div>
                 <div className="flex -space-x-2 pl-1">
-                  {collaborators.slice(0, 5).map((c) => (
-                    <div
-                      key={c.id}
-                      data-testid={`img-collaborator-${c.id}`}
-                      className="grid size-7 place-items-center rounded-full border border-white bg-white shadow-sm"
-                      style={{ boxShadow: `0 0 0 2px rgba(255,255,255,0.95), 0 8px 20px rgba(15,23,42,0.08)` }}
-                    >
+                  {collaborators.slice(0, 5).map((c) => {
+                    const avatar = (
                       <div
-                        className="grid size-6 place-items-center rounded-full text-[11px] font-semibold text-white"
-                        style={{ backgroundColor: c.color }}
-                        title={c.name}
+                        data-testid={`img-collaborator-${c.id}`}
+                        className="grid size-7 place-items-center rounded-full border border-white bg-white shadow-sm"
+                        style={{
+                          boxShadow:
+                            "0 0 0 2px rgba(255,255,255,0.95), 0 8px 20px rgba(15,23,42,0.08)",
+                        }}
                       >
-                        {c.name.slice(0, 1).toUpperCase()}
+                        <div
+                          className="grid size-6 place-items-center rounded-full text-[11px] font-semibold text-white"
+                          style={{ backgroundColor: c.color }}
+                          title={c.id === "me" ? `${c.name} (you)` : c.name}
+                        >
+                          {c.name.slice(0, 1).toUpperCase()}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+
+                    if (c.id !== "me") {
+                      return <div key={c.id}>{avatar}</div>;
+                    }
+
+                    return (
+                      <Popover
+                        key={c.id}
+                        open={nameOpen}
+                        onOpenChange={(open) => {
+                          setNameOpen(open);
+                          if (open) setNameDraft(myName);
+                        }}
+                      >
+                        <PopoverTrigger asChild>
+                          <button
+                            type="button"
+                            data-testid="button-edit-display-name"
+                            aria-label="Edit display name"
+                            className="rounded-full outline-none ring-offset-2 transition-opacity hover:opacity-90 focus-visible:ring-2 focus-visible:ring-slate-400"
+                          >
+                            {avatar}
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverContent
+                          align="end"
+                          sideOffset={8}
+                          className="w-56 rounded-2xl border border-slate-200/70 bg-white/95 p-3 shadow-md backdrop-blur"
+                        >
+                          <div className="text-xs font-medium text-slate-700">Display name</div>
+                          <div className="mt-2 flex gap-2">
+                            <Input
+                              data-testid="input-display-name"
+                              value={nameDraft}
+                              maxLength={DISPLAY_NAME_MAX}
+                              autoFocus
+                              placeholder="Your name"
+                              onChange={(e) => setNameDraft(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  commitDisplayName();
+                                } else if (e.key === "Escape") {
+                                  e.preventDefault();
+                                  setNameOpen(false);
+                                }
+                              }}
+                              className="h-8 rounded-lg text-sm"
+                            />
+                            <Button
+                              type="button"
+                              data-testid="button-save-display-name"
+                              size="sm"
+                              className="h-8 shrink-0 rounded-lg px-3"
+                              onClick={commitDisplayName}
+                            >
+                              Save
+                            </Button>
+                          </div>
+                          <div className="mt-1.5 text-[11px] text-slate-500">
+                            Shown on your cursor and avatar.
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                    );
+                  })}
                 </div>
               </div>
             </div>

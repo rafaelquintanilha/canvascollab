@@ -82,6 +82,9 @@ const PEER_COLORS = [
   "#38A169", "#DD6B20", "#6B46C1", "#EC4899", "#10B981"
 ];
 
+const DISPLAY_NAME_KEY = "collabboard.displayName";
+export const DISPLAY_NAME_MAX = 24;
+
 function generatePeerId(): PeerId {
   return Math.random().toString(36).substring(2, 10) + Date.now().toString(36).substring(2, 6);
 }
@@ -92,6 +95,29 @@ function getRandomName(): string {
 
 function getRandomColor(): string {
   return PEER_COLORS[Math.floor(Math.random() * PEER_COLORS.length)];
+}
+
+export function normalizeDisplayName(raw: string): string {
+  const trimmed = raw.replace(/\s+/g, " ").trim().slice(0, DISPLAY_NAME_MAX);
+  return trimmed.length > 0 ? trimmed : getRandomName();
+}
+
+function loadStoredDisplayName(): string {
+  try {
+    const stored = localStorage.getItem(DISPLAY_NAME_KEY);
+    if (stored) return normalizeDisplayName(stored);
+  } catch {
+    // private mode / blocked storage
+  }
+  return getRandomName();
+}
+
+function persistDisplayName(name: string) {
+  try {
+    localStorage.setItem(DISPLAY_NAME_KEY, name);
+  } catch {
+    // private mode / blocked storage
+  }
 }
 
 export interface RemotePeer {
@@ -111,7 +137,7 @@ export function useCollaboration(
   onSyncReceive: (items: BoardItem[]) => void
 ) {
   const [myId] = useState<PeerId>(() => generatePeerId());
-  const [myName] = useState(() => getRandomName());
+  const [myName, setMyNameState] = useState(() => loadStoredDisplayName());
   const [myColor] = useState(() => getRandomColor());
   const [peers, setPeers] = useState<Map<PeerId, PeerInfo>>(new Map());
   const [remotePeers, setRemotePeers] = useState<RemotePeer[]>([]);
@@ -120,10 +146,52 @@ export function useCollaboration(
   const bcRef = useRef<BroadcastChannel | null>(null);
   const peersRef = useRef<Map<PeerId, PeerInfo>>(peers);
   const syncRequestedRef = useRef<Set<PeerId>>(new Set());
-  
+  const myNameRef = useRef(myName);
+  const myColorRef = useRef(myColor);
+
   useEffect(() => {
     peersRef.current = peers;
   }, [peers]);
+
+  useEffect(() => {
+    myNameRef.current = myName;
+  }, [myName]);
+
+  useEffect(() => {
+    myColorRef.current = myColor;
+  }, [myColor]);
+
+  const announcePresence = useCallback(() => {
+    if (!bcRef.current) return;
+    const msg: PresenceMessage = {
+      type: "presence",
+      id: myId,
+      name: myNameRef.current,
+      color: myColorRef.current,
+    };
+    bcRef.current.postMessage(msg);
+  }, [myId]);
+
+  const setDisplayName = useCallback(
+    (raw: string) => {
+      const next = normalizeDisplayName(raw);
+      setMyNameState(next);
+      persistDisplayName(next);
+      myNameRef.current = next;
+      // Re-announce immediately so peers update cursors/avatars without waiting
+      // for the periodic presence tick.
+      if (bcRef.current) {
+        const msg: PresenceMessage = {
+          type: "presence",
+          id: myId,
+          name: next,
+          color: myColorRef.current,
+        };
+        bcRef.current.postMessage(msg);
+      }
+    },
+    [myId],
+  );
 
   // Initialize BroadcastChannel for same-origin peer discovery
   useEffect(() => {
@@ -132,18 +200,7 @@ export function useCollaboration(
     const bc = new BroadcastChannel("collab-board");
     bcRef.current = bc;
     
-    // Announce presence when joining
-    const announcePresence = () => {
-      const msg: PresenceMessage = {
-        type: "presence",
-        id: myId,
-        name: myName,
-        color: myColor
-      };
-      bc.postMessage(msg);
-    };
-    
-    // Announce immediately and periodically
+    // Announce immediately and periodically (name/color read from refs)
     announcePresence();
     const interval = setInterval(announcePresence, 5000);
     
@@ -153,8 +210,19 @@ export function useCollaboration(
       
       if (msg.type === "presence") {
         console.log(`[Collab] Discovered peer: ${msg.name} (${msg.id})`);
-        // New peer discovered, initiate connection if we don't have one
-        if (!peersRef.current.has(msg.id) && msg.id < myId) {
+        const existing = peersRef.current.get(msg.id);
+        if (existing) {
+          // Peer renamed (or re-announced) — refresh name/color on live connection
+          if (existing.name !== msg.name || existing.color !== msg.color) {
+            existing.name = msg.name;
+            existing.color = msg.color;
+            setRemotePeers((prev) =>
+              prev.map((p) =>
+                p.id === msg.id ? { ...p, name: msg.name, color: msg.color } : p,
+              ),
+            );
+          }
+        } else if (msg.id < myId) {
           console.log(`[Collab] Initiating connection to ${msg.name} (their ID < my ID)`);
           // Only initiate if our ID is "greater" to avoid double connections
           await initiateConnection(msg.id, msg.name, msg.color);
@@ -180,7 +248,7 @@ export function useCollaboration(
         peer.connection.close();
       });
     };
-  }, [myId, myName, myColor]);
+  }, [myId, announcePresence]);
 
   const createPeerConnection = useCallback((peerId: PeerId, peerName: string, peerColor: string, isInitiator: boolean): PeerInfo => {
     const pc = new RTCPeerConnection({
@@ -319,8 +387,8 @@ export function useCollaboration(
           from: myId,
           to: peerId,
           offer: offer,
-          name: myName,
-          color: myColor
+          name: myNameRef.current,
+          color: myColorRef.current,
         };
         bcRef.current.postMessage(msg);
       }
@@ -397,9 +465,9 @@ export function useCollaboration(
       const now = Date.now();
       
       if (existing) {
-        return prev.map(p => 
-          p.id === id 
-            ? { ...p, x, y, active, lastSeen: now }
+        return prev.map(p =>
+          p.id === id
+            ? { ...p, name, color, x, y, active, lastSeen: now }
             : p
         );
       } else {
@@ -439,6 +507,7 @@ export function useCollaboration(
     myId,
     myName,
     myColor,
+    setDisplayName,
     remotePeers,
     isConnected,
     peerCount: peers.size,
